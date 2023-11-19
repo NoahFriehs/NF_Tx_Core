@@ -11,6 +11,8 @@
 #include <mutex>
 #include "BaseTransaction.h"
 #include "Wallet.h"
+#include "WalletBalance.h"
+#include "Price/AssetValue.h"
 
 class TransactionManager {
 public:
@@ -20,13 +22,24 @@ public:
 
     void processTransactions();
 
+    void calculateWalletBalances();
+
+    std::vector<std::string> getCurrencies();
+
     bool isReady();
+
+    void setPrices(std::vector<double> prices);
 
 private:
     mutable std::mutex mutex;
     std::vector<BaseTransaction> transactions;
     std::map<std::string, Wallet> wallets;
     std::map<std::string, Wallet> outWallets;
+    WalletsBalance walletsBalance;
+    std::map<std::string, WalletBalance> walletBalanceMap;
+
+    AssetValue assetValue;
+
     std::vector<std::string> currencies;
     bool isReadyFlag = false;
 

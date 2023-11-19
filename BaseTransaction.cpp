@@ -71,3 +71,11 @@ std::string BaseTransaction::getTransactionTypeString() {
 int BaseTransaction::getWalletId() {
     return walletId;
 }
+
+long double BaseTransaction::getAmountBonus() {
+    return amountBonus;
+}
+
+long double BaseTransaction::getToAmount() {
+    return toAmount;
+}

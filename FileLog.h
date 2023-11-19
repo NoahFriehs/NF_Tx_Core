@@ -10,6 +10,8 @@
 #include <fstream>
 #include <chrono>
 #include <iomanip>
+#include <vector>
+#include <string>
 
 class FileLog {
 private:

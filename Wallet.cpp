@@ -15,7 +15,7 @@ Wallet::Wallet() {
 Wallet::~Wallet() = default;
 
 Wallet::Wallet(std::string currencyType) : Wallet() {
-    this->currencyType = std::move(currencyType);
+    this->currencyType = currencyType;
 }
 
 void Wallet::setIsOutWallet(bool b) {
@@ -25,7 +25,8 @@ void Wallet::setIsOutWallet(bool b) {
 bool Wallet::addTransaction(BaseTransaction &transaction) {
         transactions.push_back(transaction);
         balance += transaction.getAmount();
-        nativeBalance += transaction.getNativeAmount();
+        moneySpent += transaction.getNativeAmount();
+        bonusBalance += transaction.getAmountBonus();
         return true;
 }
 
@@ -36,10 +37,37 @@ int Wallet::getWalletId() {
 bool Wallet::withdraw(BaseTransaction &transaction) {
         transactions.push_back(transaction);
         balance -= transaction.getAmount();
-        nativeBalance -= transaction.getNativeAmount();
+        moneySpent -= transaction.getNativeAmount();
         return true;
 }
 
 std::vector<BaseTransaction> Wallet::getTransactions() {
     return transactions;
+}
+
+long double Wallet::getNativeBalance() const {
+    return nativeBalance;
+}
+
+long double Wallet::getBonusBalance() const {
+    return bonusBalance;
+}
+
+long double Wallet::getMoneySpent() const {
+    return moneySpent;
+}
+
+std::string Wallet::getCurrencyType() const {
+    return currencyType;
+}
+
+long double Wallet::getBalance() const {
+    return balance;
+}
+
+void Wallet::addToTransaction(BaseTransaction &transaction) {
+    transactions.push_back(transaction);
+    balance += transaction.getToAmount();
+    moneySpent += transaction.getNativeAmount();
+    bonusBalance += transaction.getAmountBonus();
 }

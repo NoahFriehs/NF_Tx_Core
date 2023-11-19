@@ -6,6 +6,7 @@
 #include "TimeSpan.h"
 
 #include <iostream>
+#include <utility>
 
 #ifdef __cplusplus
 extern "C" {
@@ -53,9 +54,26 @@ bool initWithData(const std::vector<std::string>& data, uint mode) {
 
     dataHolder.SetTransactionManager(transactionManager);
 
+    timeSpan.start();
+    transactionManager->calculateWalletBalances();
+
+    time = timeSpan.end();
+    FileLog::i("library", "Calculating balances took " + std::to_string(time) + " milliseconds");
+
     // return true if successful
     return dataHolder.isInitialized();
 }
+
+
+std::vector<std::string> getCurrencies() {
+    return DataHolder::GetInstance().GetTransactionManager()->getCurrencies();
+}
+
+void setPrice(std::vector<double> prices) {
+    DataHolder::GetInstance().GetTransactionManager()->setPrices(std::move(prices));
+    DataHolder::GetInstance().GetTransactionManager()->calculateWalletBalances();
+}
+
 
 #ifdef __cplusplus
 }

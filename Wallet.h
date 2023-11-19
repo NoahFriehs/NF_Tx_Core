@@ -23,16 +23,28 @@ public:
     void updateTransaction(BaseTransaction &transaction);
     void removeTransaction(BaseTransaction &transaction);
     std::vector<BaseTransaction> getTransactions();
-    long double getBalance();
 
     void setIsOutWallet(bool b);
 
     int getWalletId();
 
+    long double getNativeBalance() const;
+
+    long double getBonusBalance() const;
+
+    long double getMoneySpent() const;
+
+    long double getBalance() const;
+
+
+    std::string getCurrencyType() const;
+
+    void addToTransaction(BaseTransaction &transaction);
+
 private:
     int walletId{};
     std::vector<BaseTransaction> transactions = {};
-    std::string currencyType;
+    std::string currencyType = {};
     long double balance{};
     long double nativeBalance{};
     long double bonusBalance{};

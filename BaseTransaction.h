@@ -38,23 +38,27 @@ public:
 
     int getWalletId();
 
+    long double getAmountBonus();
+
+    long double getToAmount();
+
 private:
     int transactionId{};
     int walletId = -1;
     int fromWalletId{};
-    std::string description;
+    std::string description = {};
     std::tm transactionDate{};
-    std::string currencyType;
-    std::string toCurrencyType;
+    std::string currencyType = {};
+    std::string toCurrencyType = {};
     long double amount{};
     long double toAmount{};
     long double nativeAmount{};   // Amount in native currency: USD, EUR, etc.
     long double amountBonus{};
     TransactionType transactionType = NONE;
-    std::string transactionTypeString;
-    std::string transactionHash;
+    std::string transactionTypeString = {};
+    std::string transactionHash = {};
     bool isOutsideTransaction = false;
-    std::string notes;
+    std::string notes = {};
 
 
 };

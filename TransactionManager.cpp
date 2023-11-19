@@ -129,7 +129,7 @@ void TransactionManager::vibianPurchase(BaseTransaction &tx) {
 
     tx.setWalletId(toWallet->getWalletId());
     tx.setFromWalletId(wallet->getWalletId());
-    toWallet->addTransaction(tx);
+    toWallet->addToTransaction(tx);
     wallet->addTransaction(tx);
 }
 
@@ -157,4 +157,32 @@ void TransactionManager::removeUnusedTransactions() {
         }
     }
 
+}
+
+void TransactionManager::calculateWalletBalances() {
+
+    walletBalanceMap.clear();
+    for (auto &wallet: wallets) {
+
+        if (wallet.second.getCurrencyType() == "EUR") continue;
+
+        auto *walletBalance = new WalletBalance();
+        walletBalance->fillFromWallet(&wallet.second);
+        if (walletBalance->nativeBalance == 0 && walletBalance->balance != 0)
+        {
+            walletBalance->nativeBalance = assetValue.getPrice(walletBalance->currencyType) * walletBalance->balance;
+            walletBalance->nativeBonusBalance = assetValue.getPrice(walletBalance->currencyType) * walletBalance->bonusBalance;
+        }
+        walletBalanceMap.insert(std::pair<std::string, WalletBalance>(wallet.first, *walletBalance));
+    }
+    walletsBalance.fillFromWalletBalanceMap(walletBalanceMap);
+
+}
+
+std::vector<std::string> TransactionManager::getCurrencies() {
+    return currencies;
+}
+
+void TransactionManager::setPrices(std::vector<double> prices) {
+    assetValue.loadCacheWithData(currencies, prices);
 }
