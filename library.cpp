@@ -38,7 +38,12 @@ bool initWithData(const std::vector<std::string>& data, uint mode) {
 
     // parseFromCsv data
     TransactionParser parser(data);
-    parser.parseFromCsv(TransactionParser::Mode::CDC);
+    try {
+        parser.parseFromCsv(static_cast<TransactionParser::Mode>(mode));
+    } catch (std::exception &e) {   // aka Data sanitization
+        FileLog::e("library", e.what());
+        return false;
+    }
 
     long double time = timeSpan.end();
     FileLog::i("library", "Parsing took " + std::to_string(time) + " milliseconds");
