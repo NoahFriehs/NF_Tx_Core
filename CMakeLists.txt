@@ -28,4 +28,5 @@ add_library(NF_Tx_Core SHARED library.cpp
         Price/Cache.h
         Price/AssetValue.cpp
         Price/AssetValue.h
-        Price/StaticPrices.h)
+        Price/StaticPrices.h
+        Structs.h)

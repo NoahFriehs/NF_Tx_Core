@@ -9,6 +9,7 @@
 #include <string>
 #include <ctime>
 #include "Enums.h"
+#include "Structs.h"
 
 class BaseTransaction {
 
@@ -41,6 +42,8 @@ public:
     long double getAmountBonus();
 
     long double getToAmount();
+
+    TransactionData getTransactionData();
 
 private:
     int transactionId{};

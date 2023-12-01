@@ -71,3 +71,16 @@ void Wallet::addToTransaction(BaseTransaction &transaction) {
     moneySpent += transaction.getNativeAmount();
     bonusBalance += transaction.getAmountBonus();
 }
+
+WalletData Wallet::getWalletData() {
+    WalletData walletData;
+    walletData.walletId = walletId;
+    walletData.currencyType = currencyType;
+    walletData.balance = balance;
+    walletData.nativeBalance = nativeBalance;
+    walletData.bonusBalance = bonusBalance;
+    walletData.moneySpent = moneySpent;
+    walletData.isOutsideWallet = isOutsideWallet;
+    walletData.notes = notes;
+    return walletData;
+}

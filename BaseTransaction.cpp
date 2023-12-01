@@ -79,3 +79,25 @@ long double BaseTransaction::getAmountBonus() {
 long double BaseTransaction::getToAmount() {
     return toAmount;
 }
+
+TransactionData BaseTransaction::getTransactionData() {
+    TransactionData txData;
+    txData.transactionId = transactionId;
+    txData.walletId = walletId;
+    txData.fromWalletId = fromWalletId;
+    txData.description = description;
+    txData.transactionDate = transactionDate;
+    txData.currencyType = currencyType;
+    txData.toCurrencyType = toCurrencyType;
+    txData.amount = amount;
+    txData.toAmount = toAmount;
+    txData.nativeAmount = nativeAmount;
+    txData.amountBonus = amountBonus;
+    txData.transactionType = transactionType;
+    txData.transactionTypeString = transactionTypeString;
+    txData.transactionHash = transactionHash;
+    txData.isOutsideTransaction = isOutsideTransaction;
+    txData.notes = notes;
+
+    return txData;
+}

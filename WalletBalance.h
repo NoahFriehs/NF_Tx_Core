@@ -37,22 +37,12 @@ struct WalletBalance {
 struct WalletsBalance {
 
     long double nativeBalance = 0.0;
-    long double bonusBalance = 0.0;
     long double nativeBonusBalance = 0.0;
     long double moneySpent = 0.0;
-
-    void fillFromWallets(const std::vector<Wallet>& wallets) {
-        for (const auto& wallet : wallets) {
-            nativeBalance += wallet.getNativeBalance();
-            bonusBalance += wallet.getBonusBalance();
-            moneySpent += wallet.getMoneySpent();
-        }
-    }
 
     void fillFromWalletBalances(const std::vector<WalletBalance>& walletBalances) {
         for (const auto& walletBalance : walletBalances) {
             nativeBalance += walletBalance.nativeBalance;
-            bonusBalance += walletBalance.bonusBalance;
             moneySpent += walletBalance.moneySpent;
             nativeBonusBalance += walletBalance.nativeBonusBalance;
         }
@@ -62,7 +52,6 @@ struct WalletsBalance {
         for (const auto& pair : walletBalanceMap) {
             const auto& walletBalance = pair.second;
             nativeBalance += walletBalance.nativeBalance;
-            bonusBalance += walletBalance.bonusBalance;
             moneySpent += walletBalance.moneySpent;
             nativeBonusBalance += walletBalance.nativeBonusBalance;
         }

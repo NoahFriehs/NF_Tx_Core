@@ -41,6 +41,8 @@ public:
 
     void addToTransaction(BaseTransaction &transaction);
 
+    WalletData getWalletData();
+
 private:
     int walletId{};
     std::vector<BaseTransaction> transactions = {};
