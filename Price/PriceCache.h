@@ -16,13 +16,13 @@ private:
     std::unordered_map<std::string, Cache> cache = {};
 
 public:
-    double checkCache(const std::string& symbol);
-    bool testCache(const std::string& symbol);
-    void addPrice(const std::string& symbol, double price);
+    double checkCache(const std::string &symbol);
+
+    bool testCache(const std::string &symbol);
+
+    void addPrice(const std::string &symbol, double price);
     //void reloadCache(AssetValue* assetValue);
 };
-
-
 
 
 #endif //NF_TX_CORE_PRICECACHE_H

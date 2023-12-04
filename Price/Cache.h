@@ -16,8 +16,10 @@ private:
     std::chrono::time_point<std::chrono::system_clock> creationTime;
 
 public:
-    Cache(std::string  id, double price);
+    Cache(std::string id, double price);
+
     bool isOlderThanFiveMinutes() const;
+
     double getPrice() const;
 };
 

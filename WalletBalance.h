@@ -18,7 +18,7 @@ struct WalletBalance {
     long double nativeBonusBalance;
     long double moneySpent;
 
-    WalletBalance* fillFromWallet(Wallet* wallet) {
+    WalletBalance *fillFromWallet(Wallet *wallet) {
         if (wallet == nullptr) {
             return nullptr;
         }
@@ -40,17 +40,17 @@ struct WalletsBalance {
     long double nativeBonusBalance = 0.0;
     long double moneySpent = 0.0;
 
-    void fillFromWalletBalances(const std::vector<WalletBalance>& walletBalances) {
-        for (const auto& walletBalance : walletBalances) {
+    void fillFromWalletBalances(const std::vector<WalletBalance> &walletBalances) {
+        for (const auto &walletBalance: walletBalances) {
             nativeBalance += walletBalance.nativeBalance;
             moneySpent += walletBalance.moneySpent;
             nativeBonusBalance += walletBalance.nativeBonusBalance;
         }
     }
 
-    void fillFromWalletBalanceMap(const std::map<std::string, WalletBalance>& walletBalanceMap) {
-        for (const auto& pair : walletBalanceMap) {
-            const auto& walletBalance = pair.second;
+    void fillFromWalletBalanceMap(const std::map<std::string, WalletBalance> &walletBalanceMap) {
+        for (const auto &pair: walletBalanceMap) {
+            const auto &walletBalance = pair.second;
             nativeBalance += walletBalance.nativeBalance;
             moneySpent += walletBalance.moneySpent;
             nativeBonusBalance += walletBalance.nativeBonusBalance;

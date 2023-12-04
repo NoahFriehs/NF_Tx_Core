@@ -14,7 +14,9 @@ class TransactionParser {
 
 public:
     TransactionParser();
-    explicit TransactionParser(const std::vector<std::string>& data);
+
+    explicit TransactionParser(const std::vector<std::string> &data);
+
     ~TransactionParser();
 
     enum Mode {

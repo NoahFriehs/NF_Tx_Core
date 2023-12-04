@@ -20,11 +20,14 @@ private:
 
 public:
     AssetValue();
-    double getPrice(const std::string& symbol);
-    void loadCache(const std::vector<std::string>& symbols);
-    void loadCacheWithData(const std::vector<std::string>& symbols, const std::vector<double>& prices);
-};
 
+    double getPrice(const std::string &symbol);
+
+    void loadCache(const std::vector<std::string> &symbols);
+
+    void
+    loadCacheWithData(const std::vector<std::string> &symbols, const std::vector<double> &prices);
+};
 
 
 #endif //NF_TX_CORE_ASSETVALUE_H

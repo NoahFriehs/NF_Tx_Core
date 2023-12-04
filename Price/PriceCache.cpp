@@ -17,13 +17,13 @@ double PriceCache::checkCache(const std::string &symbol) {
     return -1.0;
 }
 
-bool PriceCache::testCache(const std::string& symbol) {
+bool PriceCache::testCache(const std::string &symbol) {
     Cache *cacheToCheck = &cache.find(symbol)->second;
     return cache.find(symbol) != cache.end() && !cacheToCheck->isOlderThanFiveMinutes();
 }
 
-void PriceCache::addPrice(const std::string& symbol, double price) {
-    auto* cacheToAdd = new Cache(symbol, price);
+void PriceCache::addPrice(const std::string &symbol, double price) {
+    auto *cacheToAdd = new Cache(symbol, price);
     cache.insert({symbol, *cacheToAdd});
 }
 

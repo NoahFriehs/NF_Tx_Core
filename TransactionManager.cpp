@@ -18,7 +18,6 @@ TransactionManager::TransactionManager(std::vector<BaseTransaction> &transaction
 TransactionManager::~TransactionManager() = default;
 
 
-
 void TransactionManager::processTransactions() {
     std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
     getCurrenciesFromTxs();
@@ -38,7 +37,8 @@ void TransactionManager::processTransactions() {
 
 void TransactionManager::getCurrenciesFromTxs() {
     for (auto &item: transactions) {
-        if (std::find(currencies.begin(), currencies.end(), item.getCurrencyType()) == currencies.end())
+        if (std::find(currencies.begin(), currencies.end(), item.getCurrencyType()) ==
+            currencies.end())
             currencies.push_back(item.getCurrencyType());
     }
 }
@@ -112,7 +112,8 @@ void TransactionManager::addTransactionsToWallets() {
                 wallet->withdraw(tx);
                 break;
             case STRING:
-                FileLog::w("TransactionManager", "Unknown transaction type: " + tx.getTransactionTypeString());
+                FileLog::w("TransactionManager",
+                           "Unknown transaction type: " + tx.getTransactionTypeString());
                 break;
             case NONE:
                 FileLog::e("TransactionManager", "Transaction type is NONE");
@@ -153,7 +154,8 @@ void TransactionManager::removeEmptyWallets() {
 void TransactionManager::removeUnusedTransactions() {
     for (auto &tx: transactions) {
         if (tx.getWalletId() == -1) {
-            FileLog::w("TransactionManager", "Unused transaction: " + tx.getTransactionTypeString());
+            FileLog::w("TransactionManager",
+                       "Unused transaction: " + tx.getTransactionTypeString());
         }
     }
 
@@ -168,12 +170,14 @@ void TransactionManager::calculateWalletBalances() {
 
         auto *walletBalance = new WalletBalance();
         walletBalance->fillFromWallet(&wallet.second);
-        if (walletBalance->nativeBalance == 0 && walletBalance->balance != 0)
-        {
-            walletBalance->nativeBalance = assetValue.getPrice(walletBalance->currencyType) * walletBalance->balance;
-            walletBalance->nativeBonusBalance = assetValue.getPrice(walletBalance->currencyType) * walletBalance->bonusBalance;
+        if (walletBalance->nativeBalance == 0 && walletBalance->balance != 0) {
+            walletBalance->nativeBalance =
+                    assetValue.getPrice(walletBalance->currencyType) * walletBalance->balance;
+            walletBalance->nativeBonusBalance =
+                    assetValue.getPrice(walletBalance->currencyType) * walletBalance->bonusBalance;
         }
-        walletBalanceMap.insert(std::pair<std::string, WalletBalance>(wallet.first, *walletBalance));
+        walletBalanceMap.insert(
+                std::pair<std::string, WalletBalance>(wallet.first, *walletBalance));
     }
     walletsBalance.fillFromWalletBalanceMap(walletBalanceMap);
 
@@ -185,4 +189,51 @@ std::vector<std::string> TransactionManager::getCurrencies() {
 
 void TransactionManager::setPrices(std::vector<double> prices) {
     assetValue.loadCacheWithData(currencies, prices);
+}
+
+std::vector<BaseTransaction> TransactionManager::getTransactions() {
+    return transactions;
+}
+
+double TransactionManager::getTotalMoneySpent() {
+    return walletsBalance.moneySpent;
+}
+
+double TransactionManager::getTotalValueOfAssets() {
+    return walletsBalance.nativeBalance;
+}
+
+double TransactionManager::getTotalBonus() {
+    return walletsBalance.nativeBonusBalance;
+}
+
+double TransactionManager::getValueOfAssets(int walletId) {
+    for (const auto &item: walletBalanceMap){
+        if (item.second.walletId == walletId)
+            return item.second.nativeBalance;
+    }
+    FileLog::w("TransactionsManager", "No wallet found for id: " + std::to_string(walletId));
+    return 0.0;
+}
+
+std::map<std::string, Wallet> TransactionManager::getWallets() {
+    return wallets;
+}
+
+double TransactionManager::getTotalBonus(int walletId) {
+    for (const auto &item: walletBalanceMap){
+        if (item.second.walletId == walletId)
+            return item.second.nativeBonusBalance;
+    }
+    FileLog::w("TransactionsManager", "No wallet found for id: " + std::to_string(walletId));
+    return 0.0;
+}
+
+double TransactionManager::getMoneySpent(int walletId) {
+    for (const auto &item: walletBalanceMap){
+        if (item.second.walletId == walletId)
+            return item.second.moneySpent;
+    }
+    FileLog::w("TransactionsManager", "No wallet found for id: " + std::to_string(walletId));
+    return 0.0;
 }

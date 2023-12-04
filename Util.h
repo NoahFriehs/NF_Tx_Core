@@ -16,7 +16,7 @@
 
 
 // Function to convert a string to TransactionType
-TransactionType ttConverter(const std::string& s) {
+TransactionType ttConverter(const std::string &s) {
     std::string lowercase = s;
     // Convert the input string to lowercase for case-insensitive comparison
     std::transform(lowercase.begin(), lowercase.end(), lowercase.begin(), ::tolower);
@@ -24,7 +24,8 @@ TransactionType ttConverter(const std::string& s) {
     if (lowercase == "crypto_purchase") return crypto_purchase;
     if (lowercase == "supercharger_deposit") return supercharger_deposit;
     if (lowercase == "rewards_platform_deposit_credited") return rewards_platform_deposit_credited;
-    if (lowercase == "supercharger_reward_to_app_credited") return supercharger_reward_to_app_credited;
+    if (lowercase == "supercharger_reward_to_app_credited")
+        return supercharger_reward_to_app_credited;
     if (lowercase == "viban_purchase") return viban_purchase;
     if (lowercase == "crypto_earn_program_created") return crypto_earn_program_created;
     if (lowercase == "crypto_earn_interest_paid") return crypto_earn_interest_paid;
@@ -47,7 +48,7 @@ TransactionType ttConverter(const std::string& s) {
     return STRING;
 }
 
-static std::vector<std::string> splitString(const std::string& input, char delimiter) {
+static std::vector<std::string> splitString(const std::string &input, char delimiter) {
     std::vector<std::string> result;
     std::istringstream stream(input);
     std::string token;
@@ -61,7 +62,7 @@ static std::vector<std::string> splitString(const std::string& input, char delim
 
 class TimestampConverter {
 public:
-    static std::tm stringToTm(const std::string& timestamp_str) {
+    static std::tm stringToTm(const std::string &timestamp_str) {
         std::tm timestamp_tm = {};
         std::istringstream ss(timestamp_str);
         ss >> std::get_time(&timestamp_tm, "%Y-%m-%d %H:%M:%S");

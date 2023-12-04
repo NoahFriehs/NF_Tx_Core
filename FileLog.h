@@ -26,7 +26,8 @@ private:
         auto now = std::chrono::system_clock::now();
         std::time_t time = std::chrono::system_clock::to_time_t(now);
         std::tm tm = *std::localtime(&time);
-        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count() % 1000;
+        auto milliseconds = std::chrono::duration_cast<std::chrono::milliseconds>(
+                now.time_since_epoch()).count() % 1000;
 
         char buffer[80];
         std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", &tm);
@@ -38,15 +39,13 @@ private:
     }
 
 
-
     static void createLogFileIfNeeded() {
         std::ifstream logFile(LOG_FILENAME);
         if (!logFile) {
             // File does not exist, create it.
             std::ofstream createFile(LOG_FILENAME);
             createFile.close();
-        }
-        else {
+        } else {
             std::vector<std::string> lines;
             std::string line;
             while (std::getline(logFile, line)) {
@@ -68,7 +67,8 @@ private:
     }
 
 public:
-    static void init(const std::string& logFilename = "", bool logEnabled = true, int maxLogLevel_ = -1) {
+    static void
+    init(const std::string &logFilename = "", bool logEnabled = true, int maxLogLevel_ = -1) {
         logIsEnabled = logEnabled;
         if (!logIsEnabled) return;
         LOG_FILENAME = logFilename.empty() ? LOG_FILENAME : logFilename;
@@ -103,7 +103,7 @@ public:
         return LOG_FILENAME;
     }
 
-    static void setLogFilename(const std::string& logFilename) {
+    static void setLogFilename(const std::string &logFilename) {
         LOG_FILENAME = logFilename;
         createLogFileIfNeeded();
     }
@@ -131,7 +131,8 @@ public:
             return "";
         }
 
-        std::string logContent((std::istreambuf_iterator<char>(logFile)), std::istreambuf_iterator<char>());
+        std::string logContent((std::istreambuf_iterator<char>(logFile)),
+                               std::istreambuf_iterator<char>());
         return logContent;
     }
 
@@ -147,16 +148,22 @@ public:
 
     static std::string logLevelToString(int logLevel) {
         switch (logLevel) {
-            case 2: return "VERBOSE";
-            case 3: return "DEBUG";
-            case 4: return "INFO";
-            case 5: return "WARN";
-            case 6: return "ERROR";
-            default: return "UNKNOWN";
+            case 2:
+                return "VERBOSE";
+            case 3:
+                return "DEBUG";
+            case 4:
+                return "INFO";
+            case 5:
+                return "WARN";
+            case 6:
+                return "ERROR";
+            default:
+                return "UNKNOWN";
         }
     }
 
-    static void writeToFile(int logLevel, const std::string& tag, const std::string& message) {
+    static void writeToFile(int logLevel, const std::string &tag, const std::string &message) {
         std::ofstream logFile(LOG_FILENAME, std::ios::app);
         if (!logFile) {
             std::cerr << "Error: Could not open log file" << std::endl;
@@ -168,7 +175,7 @@ public:
         logFile << timeStamp << " " << logLevelString << " " << tag << ": " << message << std::endl;
     }
 
-    static void v(const std::string& tag, const std::string& message) {
+    static void v(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (2 < maxLogLevel) return;  // VERBOSE
         std::cout << "VERBOSE " << tag << ": " << message << std::endl;
@@ -176,7 +183,7 @@ public:
         writeToFile(2, tag, message);
     }
 
-    static void d(const std::string& tag, const std::string& message) {
+    static void d(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (3 < maxLogLevel) return;  // DEBUG
         std::cout << "DEBUG " << tag << ": " << message << std::endl;
@@ -184,7 +191,7 @@ public:
         writeToFile(3, tag, message);
     }
 
-    static void i(const std::string& tag, const std::string& message) {
+    static void i(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (4 < maxLogLevel) return;  // INFO
         std::cout << "INFO " << tag << ": " << message << std::endl;
@@ -192,7 +199,7 @@ public:
         writeToFile(4, tag, "Info: " + message);
     }
 
-    static void w(const std::string& tag, const std::string& message) {
+    static void w(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (5 < maxLogLevel) return;  // WARN
         std::cerr << "WARNING " << tag << ": " << message << std::endl;
@@ -200,7 +207,7 @@ public:
         writeToFile(5, tag, "Warning: " + message);
     }
 
-    static void e(const std::string& tag, const std::string& message) {
+    static void e(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (6 < maxLogLevel) return;  // ERROR
         std::cerr << "ERROR " << tag << ": " << message << std::endl;
@@ -210,7 +217,6 @@ public:
 
 
 };
-
 
 
 #endif //NF_TX_CORE_FILELOG_H

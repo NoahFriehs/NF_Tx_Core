@@ -9,11 +9,10 @@ AssetValue::AssetValue() : isConnected(true), isRunning(true) {}
 
 class StaticPrices;
 
-double AssetValue::getPrice(const std::string& symbol) {
+double AssetValue::getPrice(const std::string &symbol) {
     // Implementation details for getting price
 
-    if (cache.testCache(symbol))
-    {
+    if (cache.testCache(symbol)) {
         return cache.checkCache(symbol);
     }
 
@@ -22,12 +21,13 @@ double AssetValue::getPrice(const std::string& symbol) {
     return staticPrices.prices[symbol];
 }
 
-void AssetValue::loadCache(const std::vector<std::string>& symbols) {
+void AssetValue::loadCache(const std::vector<std::string> &symbols) {
     // Implementation details for loading cache
     throw std::runtime_error("Not implemented");
 }
 
-void AssetValue::loadCacheWithData(const std::vector<std::string> &symbols, const std::vector<double> &prices) {
+void AssetValue::loadCacheWithData(const std::vector<std::string> &symbols,
+                                   const std::vector<double> &prices) {
     // Implementation details for loading cache with data
     int len = symbols.size();
     for (int i = 0; i < len; i++) {

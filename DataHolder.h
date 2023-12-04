@@ -13,14 +13,15 @@
 class DataHolder {
 
 public:
-    static DataHolder& GetInstance() {
+    static DataHolder &GetInstance() {
         static DataHolder instance;
         return instance;
     }
 
     // Delete copy constructor and assignment operation to ensure uniqueness
-    DataHolder(DataHolder const&) = delete;
-    DataHolder& operator=(DataHolder const&) = delete;
+    DataHolder(DataHolder const &) = delete;
+
+    DataHolder &operator=(DataHolder const &) = delete;
 
 
     void SetTransactionManager(TransactionManager *tm) {

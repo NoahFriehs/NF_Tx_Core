@@ -23,11 +23,11 @@ void Wallet::setIsOutWallet(bool b) {
 }
 
 bool Wallet::addTransaction(BaseTransaction &transaction) {
-        transactions.push_back(transaction);
-        balance += transaction.getAmount();
-        moneySpent += transaction.getNativeAmount();
-        bonusBalance += transaction.getAmountBonus();
-        return true;
+    transactions.push_back(transaction);
+    balance += transaction.getAmount();
+    moneySpent += transaction.getNativeAmount();
+    bonusBalance += transaction.getAmountBonus();
+    return true;
 }
 
 int Wallet::getWalletId() {
@@ -35,10 +35,10 @@ int Wallet::getWalletId() {
 }
 
 bool Wallet::withdraw(BaseTransaction &transaction) {
-        transactions.push_back(transaction);
-        balance -= transaction.getAmount();
-        moneySpent -= transaction.getNativeAmount();
-        return true;
+    transactions.push_back(transaction);
+    balance -= transaction.getAmount();
+    moneySpent -= transaction.getNativeAmount();
+    return true;
 }
 
 std::vector<BaseTransaction> Wallet::getTransactions() {

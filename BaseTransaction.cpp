@@ -93,8 +93,7 @@ TransactionData BaseTransaction::getTransactionData() {
     txData.toAmount = toAmount;
     txData.nativeAmount = nativeAmount;
     txData.amountBonus = amountBonus;
-    txData.transactionType = transactionType;
-    txData.transactionTypeString = transactionTypeString;
+    txData.transactionTypeOrdinal = transactionType;
     txData.transactionHash = transactionHash;
     txData.isOutsideTransaction = isOutsideTransaction;
     txData.notes = notes;

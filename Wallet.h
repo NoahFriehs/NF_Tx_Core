@@ -18,10 +18,15 @@ public:
     ~Wallet();
 
     bool addTransaction(BaseTransaction &transaction);
+
     bool withdraw(BaseTransaction &transaction);
+
     void addBonus(BaseTransaction &transaction);
+
     void updateTransaction(BaseTransaction &transaction);
+
     void removeTransaction(BaseTransaction &transaction);
+
     std::vector<BaseTransaction> getTransactions();
 
     void setIsOutWallet(bool b);

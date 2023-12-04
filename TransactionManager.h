@@ -17,7 +17,9 @@
 class TransactionManager {
 public:
     TransactionManager();
+
     explicit TransactionManager(std::vector<BaseTransaction> &transactions);
+
     ~TransactionManager();
 
     void processTransactions();
@@ -29,6 +31,22 @@ public:
     bool isReady();
 
     void setPrices(std::vector<double> prices);
+
+    double getTotalMoneySpent();
+
+    std::vector<BaseTransaction> getTransactions();
+
+    double getTotalValueOfAssets();
+
+    double getTotalBonus();
+
+    double getValueOfAssets(int walletId);
+
+    std::map<std::string, Wallet> getWallets();
+
+    double getTotalBonus(int walletId);
+
+    double getMoneySpent(int walletId);
 
 private:
     mutable std::mutex mutex;

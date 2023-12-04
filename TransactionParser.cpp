@@ -11,7 +11,7 @@ TransactionParser::TransactionParser() = default;
 
 TransactionParser::~TransactionParser() = default;
 
-TransactionParser::TransactionParser(const std::vector<std::string>& data) {
+TransactionParser::TransactionParser(const std::vector<std::string> &data) {
     if (data.empty()) throw std::invalid_argument("Data is empty");
     this->data = data;
     hasData = true;
@@ -43,7 +43,9 @@ std::vector<BaseTransaction> &TransactionParser::getTransactions() {
 
 void TransactionParser::parseCDC() {
 
-    if ("Timestamp (UTC),Transaction Description,Currency,Amount,To Currency,To Amount,Native Currency,Native Amount,Native Amount (in USD),Transaction Kind,Transaction Hash" == data[0]) data.erase(data.begin());   // remove header row, if needed
+    if ("Timestamp (UTC),Transaction Description,Currency,Amount,To Currency,To Amount,Native Currency,Native Amount,Native Amount (in USD),Transaction Kind,Transaction Hash" ==
+        data[0])
+        data.erase(data.begin());   // remove header row, if needed
 
     for (const auto &item: data) {
         BaseTransaction transaction;
@@ -51,7 +53,8 @@ void TransactionParser::parseCDC() {
         transactions.push_back(transaction);
     }
 
-    FileLog::i("TransactionParser", "Parsed " + std::to_string(transactions.size()) + " transactions");
+    FileLog::i("TransactionParser",
+               "Parsed " + std::to_string(transactions.size()) + " transactions");
 
     data.clear();
     hasData = false;

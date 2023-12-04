@@ -15,6 +15,7 @@ class BaseTransaction {
 
 public:
     BaseTransaction();
+
     ~BaseTransaction();
 
 
@@ -23,6 +24,7 @@ public:
     void setAmountToAmountBonus();
 
     void setWalletId(int id);
+
     void setFromWalletId(int id);
 
     std::string getCurrencyType();
