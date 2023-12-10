@@ -9,13 +9,8 @@
 #include <utility>
 //#include <jni.h>
 
-#ifdef __cplusplus
 extern "C" {
-#endif
 
-void hello() {
-    std::cout << "Hello, World! 2x3c" << std::endl;
-}
 
 
 bool init() {
@@ -38,7 +33,7 @@ bool initWithData(const std::vector<std::string> &data, uint mode) {
     // parseFromCsv data
     TransactionParser parser(data);
     try {
-        parser.parseFromCsv(static_cast<TransactionParser::Mode>(mode));
+        parser.parseFromCsv(static_cast<Mode>(mode));
     } catch (std::exception &e) {
         FileLog::e("library", e.what());
         return false;
@@ -47,7 +42,9 @@ bool initWithData(const std::vector<std::string> &data, uint mode) {
     long double time = timeSpan.end();
     FileLog::i("library", "Parsing took " + std::to_string(time) + " milliseconds");
 
-    auto *transactionManager = new TransactionManager(parser.getTransactions());
+    auto *transactionManager = new TransactionManager();
+
+    transactionManager->setTransactions(parser.getTransactions(), static_cast<Mode>(mode));
 
     timeSpan.start();
 
@@ -71,9 +68,21 @@ void setPrice(std::vector<double> prices) {
     DataHolder::GetInstance().GetTransactionManager()->calculateWalletBalances();
 }
 
-#ifdef __cplusplus
+
+double getTotalMoneySpent() {
+    return DataHolder::GetInstance().GetTransactionManager()->getTotalMoneySpent();
 }
-#endif
+
+double getTotalValueOfAssets() {
+    return DataHolder::GetInstance().GetTransactionManager()->getTotalValueOfAssets();
+}
+
+double getTotalBonus() {
+    return DataHolder::GetInstance().GetTransactionManager()->getTotalBonus();
+}
+
+
+}
 /**
 extern "C"
 JNIEXPORT jboolean JNICALL
@@ -130,17 +139,17 @@ extern "C"
 JNIEXPORT jdouble JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getTotalMoneySpent(JNIEnv *env,
                                                                           jobject thiz) {
-    return DataHolder::GetInstance().GetTransactionManager()->getTotalMoneySpent();
+    return getTotalMoneySpent();
 }
 extern "C"
 JNIEXPORT jdouble JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getValueOfAssets(JNIEnv *env, jobject thiz) {
-    return DataHolder::GetInstance().GetTransactionManager()->getTotalValueOfAssets();
+    return getTotalValueOfAssets();
 }
 extern "C"
 JNIEXPORT jdouble JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getTotalBonus(JNIEnv *env, jobject thiz) {
-    return DataHolder::GetInstance().GetTransactionManager()->getTotalBonus();
+    return getTotalBonus();
 }
 extern "C"
 JNIEXPORT jdouble JNICALL

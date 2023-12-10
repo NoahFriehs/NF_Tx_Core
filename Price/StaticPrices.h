@@ -15,7 +15,7 @@ public:
     StaticPrices() {
         prices["DOGE"] = 0.07;
         prices["CUDOS"] = 0.002;
-        prices["ETH"] = 1.300;
+        prices["ETH"] = 1300;
         prices["BTC"] = 16700.0;
         prices["CRO"] = 0.06;
         prices["EUR"] = 1.0;

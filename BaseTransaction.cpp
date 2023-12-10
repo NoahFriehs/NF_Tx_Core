@@ -5,7 +5,7 @@
 #include "BaseTransaction.h"
 #include "Util.h"
 
-int txIdCounter;
+int txIdCounter;    //TODO: be careful with this when loading from DB
 
 BaseTransaction::BaseTransaction() = default;
 
@@ -99,4 +99,18 @@ TransactionData BaseTransaction::getTransactionData() {
     txData.notes = notes;
 
     return txData;
+}
+
+void BaseTransaction::parseCard(const std::string &txString) {
+    auto tx = splitString(txString, ',');
+
+    transactionId = txIdCounter++;
+    transactionDate = TimestampConverter::stringToTm(tx[0]);
+    description = tx[1];
+    currencyType = tx[2];
+    amount = std::stold(tx[3]);
+    nativeAmount = std::stold(tx[7]);
+    transactionTypeString = tx[1];
+    transactionType = STRING;
+
 }

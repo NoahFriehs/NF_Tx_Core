@@ -19,12 +19,6 @@ public:
 
     ~TransactionParser();
 
-    enum Mode {
-        CDC,
-        Card,
-        Custom
-    };
-
     void parseFromCsv(Mode mode);
 
     std::vector<BaseTransaction> &getTransactions();
@@ -35,6 +29,8 @@ private:
     bool hasData = false;
 
     void parseCDC();
+
+    void parseCard();
 };
 
 

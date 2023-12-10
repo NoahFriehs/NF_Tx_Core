@@ -36,10 +36,17 @@ void TransactionManager::processTransactions() {
 }
 
 void TransactionManager::getCurrenciesFromTxs() {
-    for (auto &item: transactions) {
+    if (!transactions.empty()) for (auto &item: transactions) {
+        hasTxData = true;
         if (std::find(currencies.begin(), currencies.end(), item.getCurrencyType()) ==
             currencies.end())
             currencies.push_back(item.getCurrencyType());
+    }
+    if (!cardTransactions.empty()) for (auto &item: cardTransactions) {
+        hasCardTxData = true;
+        if (std::find(cardTxTypes.begin(), cardTxTypes.end(), item.getTransactionTypeString()) ==
+            cardTxTypes.end())
+            cardTxTypes.push_back(item.getTransactionTypeString());
     }
 }
 
@@ -49,7 +56,7 @@ bool TransactionManager::isReady() {
 }
 
 void TransactionManager::createWallets() {
-    for (auto &currency: currencies) {
+    if (hasTxData) for (auto &currency: currencies) {
         FileLog::i("TransactionManager", "Creating wallets for " + currency);
         // create wallets
         Wallet wallet(currency);
@@ -59,10 +66,18 @@ void TransactionManager::createWallets() {
         wallets.insert(std::pair<std::string, Wallet>(currency, wallet));
         outWallets.insert(std::pair<std::string, Wallet>(currency, outWallet));
     }
+    if (hasCardTxData) for (auto &txType: cardTxTypes) {
+        FileLog::i("TransactionManager", "Creating wallets for " + txType);
+        // create wallets
+        //TODO: add nonStrictWallet support
+        Wallet wallet(txType);
+        // add wallet to map
+        cardWallets.insert(std::pair<std::string, Wallet>(txType, wallet));
+    }
 }
 
 void TransactionManager::addTransactionsToWallets() {
-    for (auto &tx: transactions) {
+    if (hasTxData) for (auto &tx: transactions) {
         FileLog::v("TransactionManager", "Adding transaction to wallet: " + tx.getCurrencyType());
         // add transaction to wallet
         auto *wallet = &wallets[tx.getCurrencyType()];
@@ -122,6 +137,8 @@ void TransactionManager::addTransactionsToWallets() {
         }
 
     }
+
+    if (hasCardTxData) throw std::invalid_argument("Card transactions not implemented yet");
 }
 
 void TransactionManager::vibianPurchase(BaseTransaction &tx) {
@@ -236,4 +253,26 @@ double TransactionManager::getMoneySpent(int walletId) {
     }
     FileLog::w("TransactionsManager", "No wallet found for id: " + std::to_string(walletId));
     return 0.0;
+}
+
+void TransactionManager::setTransactions(std::vector<BaseTransaction> &transactions_, Mode mode) {
+    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    if (transactions_.empty()) throw std::invalid_argument("Transactions is empty");
+
+    switch (mode) {
+        case CDC:
+            this->transactions = transactions_;
+            hasTxData = true;
+            break;
+        case Card:
+            this->cardTransactions = transactions_;
+            hasCardTxData = true;
+            break;
+        case Custom:
+            throw std::invalid_argument("Custom mode not implemented");
+            break;
+        case Default:
+            this->transactions = transactions_;
+            break;
+    }
 }

@@ -13,6 +13,7 @@
 #include "Wallet.h"
 #include "WalletBalance.h"
 #include "Price/AssetValue.h"
+#include "Enums.h"
 
 class TransactionManager {
 public:
@@ -21,6 +22,8 @@ public:
     explicit TransactionManager(std::vector<BaseTransaction> &transactions);
 
     ~TransactionManager();
+
+    void setTransactions(std::vector<BaseTransaction> &transactions_, Mode mode);
 
     void processTransactions();
 
@@ -49,16 +52,21 @@ public:
     double getMoneySpent(int walletId);
 
 private:
+    bool hasTxData = false;
+    bool hasCardTxData = false;
     mutable std::mutex mutex;
     std::vector<BaseTransaction> transactions;
+    std::vector<BaseTransaction> cardTransactions;
     std::map<std::string, Wallet> wallets;
     std::map<std::string, Wallet> outWallets;
+    std::map<std::string, Wallet> cardWallets;
     WalletsBalance walletsBalance;
     std::map<std::string, WalletBalance> walletBalanceMap;
 
     AssetValue assetValue;
 
     std::vector<std::string> currencies;
+    std::vector<std::string> cardTxTypes;
     bool isReadyFlag = false;
 
     void getCurrenciesFromTxs();

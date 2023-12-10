@@ -25,13 +25,16 @@ void TransactionParser::parseFromCsv(Mode mode) {
 
         case CDC: {
             parseCDC();
-        }
             break;
+        }
         case Card:
-            throw std::invalid_argument("Card mode not implemented");
+            parseCard();
             break;
         case Custom:
             throw std::invalid_argument("Custom mode not implemented");
+            break;
+        case Default:
+            parseCDC();
             break;
     }
 
@@ -60,4 +63,22 @@ void TransactionParser::parseCDC() {
     hasData = false;
 }
 
-#include "TransactionParser.h"
+void TransactionParser::parseCard() {
+
+    if ("Timestamp (UTC),Transaction Description,Currency,Amount,To Currency,To Amount,Native Currency,Native Amount,Native Amount (in USD),Transaction Kind,Transaction Hash" ==
+        data[0])
+        data.erase(data.begin());   // remove header row, if needed
+
+    for (const auto &item: data) {
+        BaseTransaction transaction;
+        transaction.parseCard(item);
+        transactions.push_back(transaction);
+    }
+
+    FileLog::i("TransactionParser",
+               "Parsed " + std::to_string(transactions.size()) + " transactions");
+
+    data.clear();
+    hasData = false;
+
+}

@@ -32,5 +32,12 @@ enum TransactionType {
     NONE
 };
 
+enum Mode {
+    CDC,
+    Card,
+    Default,
+    Custom
+};
+
 
 #endif //NF_TX_CORE_ENUMS_H

@@ -4,22 +4,26 @@
 #include <vector>
 #include <string>
 
-#ifdef __cplusplus
 extern "C" {
-#endif
 
-void hello();
 
 bool init();
 
 bool initWithData(const std::vector<std::string> &data, uint mode);
 
-std::vector<std::string> getCurrencies();   //Kotlin: List<String> getCurrencies();
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreturn-type-c-linkage"  // Ignore warning about C++ linkage
+std::vector<std::string> getCurrencies();
+#pragma clang diagnostic pop
 
-void setPrice(std::vector<double> prices);  //Kotlin: void setPrice(List<Double> prices);
+void setPrice(std::vector<double> prices);
 
-#ifdef __cplusplus
+double getTotalMoneySpent();
+
+double getTotalValueOfAssets();
+
+double getTotalBonus();
+
 }
-#endif
 
 #endif //NF_TX_CORE_LIBRARY_H

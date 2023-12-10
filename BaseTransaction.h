@@ -21,6 +21,8 @@ public:
 
     void parseCDC(const std::string &txString);
 
+    void parseCard(const std::string &txString);
+
     void setAmountToAmountBonus();
 
     void setWalletId(int id);
