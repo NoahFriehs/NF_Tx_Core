@@ -56,6 +56,12 @@ struct WalletsBalance {
             nativeBonusBalance += walletBalance.nativeBonusBalance;
         }
     }
+
+    void reset() {
+        nativeBalance = 0.0;
+        nativeBonusBalance = 0.0;
+        moneySpent = 0.0;
+    }
 };
 
 

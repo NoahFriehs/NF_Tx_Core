@@ -57,15 +57,16 @@ struct TransactionData {
         char dateTimeStr[100];
         std::strftime(dateTimeStr, sizeof(dateTimeStr), "%Y-%m-%d %H:%M:%S",
                       &transaction.transactionDate);
-        addNode("transactionDate", dateTimeStr);
+        std::string dateTimeString = dateTimeStr;
+        addNode("transactionDate", dateTimeString.c_str());
 
         addNode("currencyType", transaction.currencyType);
         addNode("toCurrencyType", transaction.toCurrencyType);
-        addNode("amount", std::to_string(transaction.amount));
-        addNode("toAmount", std::to_string(transaction.toAmount));
-        addNode("nativeAmount", std::to_string(transaction.nativeAmount));
-        addNode("amountBonus", std::to_string(transaction.amountBonus));
-        addNode("transactionTypeOrdinal", std::to_string(transaction.transactionTypeOrdinal));
+        addNode("amount", std::to_string(transaction.amount).c_str());
+        addNode("toAmount", std::to_string(transaction.toAmount).c_str());
+        addNode("nativeAmount", std::to_string(transaction.nativeAmount).c_str());
+        addNode("amountBonus", std::to_string(transaction.amountBonus).c_str());
+        addNode("transactionTypeOrdinal", std::to_string(transaction.transactionTypeOrdinal).c_str());
         addNode("transactionHash", transaction.transactionHash);
         addNode("isOutsideTransaction", transaction.isOutsideTransaction ? "true" : "false");
         addNode("notes", transaction.notes);
@@ -124,18 +125,18 @@ struct TransactionData {
 struct WalletData {
     int walletId{};
     std::string currencyType = {};
-    long double balance{};
-    long double nativeBalance{};
-    long double bonusBalance{};
-    long double moneySpent{};
+    double balance{};
+    double nativeBalance{};
+    double bonusBalance{};
+    double moneySpent{};
     bool isOutsideWallet{};
-    std::string notes;
+    std::string notes = {};
 
     std::string serializeToXml() {
         return serializeToXml(*this);
     }
 
-    std::string serializeToXml(const WalletData &wallet) {
+    static std::string serializeToXml(const WalletData &wallet) {
         rapidxml::xml_document<> doc;
 
         auto *root = doc.allocate_node(rapidxml::node_element, "WalletData");

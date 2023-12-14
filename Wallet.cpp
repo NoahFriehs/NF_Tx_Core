@@ -3,8 +3,10 @@
 //
 
 #include "Wallet.h"
+#include "FileLog.h"
 
 #include <utility>
+#include <memory>
 
 int walletIdCounter = 0;
 
@@ -15,7 +17,8 @@ Wallet::Wallet() {
 Wallet::~Wallet() = default;
 
 Wallet::Wallet(std::string currencyType) : Wallet() {
-    this->currencyType = currencyType;
+    FileLog::i("Wallet", "Creating wallet with currency type: " + currencyType);
+    this->currencyType = std::move(currencyType);
 }
 
 void Wallet::setIsOutWallet(bool b) {
@@ -23,6 +26,7 @@ void Wallet::setIsOutWallet(bool b) {
 }
 
 bool Wallet::addTransaction(BaseTransaction &transaction) {
+    transaction.setWalletId(walletId);
     transactions.push_back(transaction);
     balance += transaction.getAmount();
     moneySpent += transaction.getNativeAmount();
@@ -72,8 +76,8 @@ void Wallet::addToTransaction(BaseTransaction &transaction) {
     bonusBalance += transaction.getAmountBonus();
 }
 
-WalletData Wallet::getWalletData() {
-    WalletData walletData;
+std::unique_ptr<WalletData> Wallet::getWalletData() {
+    WalletData walletData = {};
     walletData.walletId = walletId;
     walletData.currencyType = currencyType;
     walletData.balance = balance;
@@ -82,5 +86,9 @@ WalletData Wallet::getWalletData() {
     walletData.moneySpent = moneySpent;
     walletData.isOutsideWallet = isOutsideWallet;
     walletData.notes = notes;
-    return walletData;
+    return std::make_unique<WalletData>(walletData);
+}
+
+void Wallet::setCurrencyType(std::string currencyType_) {
+    currencyType = currencyType_;
 }

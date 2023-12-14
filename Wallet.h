@@ -7,6 +7,7 @@
 
 
 #include <vector>
+#include <memory>
 #include "BaseTransaction.h"
 
 class Wallet {
@@ -42,16 +43,18 @@ public:
     long double getBalance() const;
 
 
-    std::string getCurrencyType() const;
+    [[nodiscard]] std::string getCurrencyType() const;
 
     void addToTransaction(BaseTransaction &transaction);
 
-    WalletData getWalletData();
+    std::unique_ptr<WalletData> getWalletData();
+
+    void setCurrencyType(std::string currencyType_);
 
 private:
     int walletId{};
     std::vector<BaseTransaction> transactions = {};
-    std::string currencyType = {};
+    std::string currencyType;
     long double balance{};
     long double nativeBalance{};
     long double bonusBalance{};

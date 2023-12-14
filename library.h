@@ -20,9 +20,31 @@ void setPrice(std::vector<double> prices);
 
 double getTotalMoneySpent();
 
+double getTotalMoneySpentCard();
+
 double getTotalValueOfAssets();
 
+double getTotalValueOfAssetsCard();
+
 double getTotalBonus();
+
+double getTotalBonusCard();
+
+double getValueOfAssets(int walletId);
+
+double getBonus(int walletId);
+
+double getMoneySpent(int walletId);
+
+std::vector<std::string> getWalletsAsStrings();
+
+std::vector<std::string> getCardWalletsAsStrings();
+
+std::string getWalletAsString(int walletId);
+
+std::vector<std::string> getTransactionsAsStrings();
+
+std::vector<std::string> getCardTransactionsAsStrings();
 
 }
 
