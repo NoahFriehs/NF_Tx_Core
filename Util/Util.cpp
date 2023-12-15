@@ -1,22 +1,13 @@
 //
-// Created by nfriehs on 10/31/23.
+// Created by nfriehs on 12/15/23.
 //
 
-#ifndef NF_TX_CORE_UTIL_H
-#define NF_TX_CORE_UTIL_H
-
-#include <string>
-#include <algorithm>
-#include <iostream>
+#include "Util.h"
+#include "../FileLog.h"
 #include <iomanip>
-#include <sstream>
-#include <ctime>
-#include <vector>
-#include "Enums.h"
+#include <algorithm>
 
-
-// Function to convert a string to TransactionType
-TransactionType ttConverter(const std::string &s) {
+TransactionType ttConverter(const std::string &s){
     std::string lowercase = s;
     // Convert the input string to lowercase for case-insensitive comparison
     std::transform(lowercase.begin(), lowercase.end(), lowercase.begin(), ::tolower);
@@ -24,8 +15,7 @@ TransactionType ttConverter(const std::string &s) {
     if (lowercase == "crypto_purchase") return crypto_purchase;
     if (lowercase == "supercharger_deposit") return supercharger_deposit;
     if (lowercase == "rewards_platform_deposit_credited") return rewards_platform_deposit_credited;
-    if (lowercase == "supercharger_reward_to_app_credited")
-        return supercharger_reward_to_app_credited;
+    if (lowercase == "supercharger_reward_to_app_credited") return supercharger_reward_to_app_credited;
     if (lowercase == "viban_purchase") return viban_purchase;
     if (lowercase == "crypto_earn_program_created") return crypto_earn_program_created;
     if (lowercase == "crypto_earn_interest_paid") return crypto_earn_interest_paid;
@@ -44,11 +34,10 @@ TransactionType ttConverter(const std::string &s) {
     if (lowercase == "dust_conversion_debited") return dust_conversion_debited;
     if (lowercase == "crypto_viban_exchange") return crypto_viban_exchange;
 
-    // If none of the above cases match, return STRING or handle it as needed
     return STRING;
 }
 
-static std::vector<std::string> splitString(const std::string &input, char delimiter) {
+std::vector<std::string> splitString(const std::string &input, char delimiter) {
     std::vector<std::string> result;
     std::istringstream stream(input);
     std::string token;
@@ -60,17 +49,22 @@ static std::vector<std::string> splitString(const std::string &input, char delim
     return result;
 }
 
-class TimestampConverter {
-public:
-    static std::tm stringToTm(const std::string &timestamp_str) {
-        std::tm timestamp_tm = {};
-        std::istringstream ss(timestamp_str);
-        ss >> std::get_time(&timestamp_tm, "%Y-%m-%d %H:%M:%S");
-        if (ss.fail()) {
-            throw std::runtime_error("Failed to parse timestamp.");
-        }
+
+std::tm TimestampConverter::stringToTm(const std::string &timestamp_str) {
+    std::tm timestamp_tm = {};
+    if (timestamp_str.empty()) {
+        FileLog::w("TimestampConverter", "Empty timestamp string.");
         return timestamp_tm;
     }
-};
-
-#endif //NF_TX_CORE_UTIL_H
+    std::istringstream ss(timestamp_str);
+    ss >> std::get_time(&timestamp_tm, "%Y-%m-%d %H:%M:%S");
+    if (ss.fail()) {
+        throw std::runtime_error("Failed to parse timestamp.");
+    }
+    return timestamp_tm;
+}
+std::string TimestampConverter::tmToString(const std::tm &timestamp_tm) {
+    std::ostringstream ss;
+    ss << std::put_time(&timestamp_tm, "%Y-%m-%d %H:%M:%S");
+    return ss.str();
+}

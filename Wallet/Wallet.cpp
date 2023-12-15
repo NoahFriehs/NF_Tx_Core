@@ -3,7 +3,7 @@
 //
 
 #include "Wallet.h"
-#include "FileLog.h"
+#include "../FileLog.h"
 
 #include <utility>
 #include <memory>
@@ -17,7 +17,7 @@ Wallet::Wallet() {
 Wallet::~Wallet() = default;
 
 Wallet::Wallet(std::string currencyType) : Wallet() {
-    FileLog::i("Wallet", "Creating wallet with currency type: " + currencyType);
+    FileLog::v("Wallet", "Creating wallet with currency type: " + currencyType);
     this->currencyType = std::move(currencyType);
 }
 
@@ -91,4 +91,41 @@ std::unique_ptr<WalletData> Wallet::getWalletData() {
 
 void Wallet::setCurrencyType(std::string currencyType_) {
     currencyType = currencyType_;
+}
+
+WalletStruct* Wallet::getWalletStruct() {
+    auto data = new WalletStruct();
+    data->walletId = walletId;
+    for (auto& transaction : transactions) {
+        data->transactions.push_back(transaction.getTransactionStruct());
+    }
+    data->currencyType = currencyType;
+    data->balance = balance;
+    data->nativeBalance = nativeBalance;
+    data->bonusBalance = bonusBalance;
+    data->moneySpent = moneySpent;
+    data->isOutsideWallet = isOutsideWallet;
+    data->notes = notes;
+    return data;
+}
+
+void Wallet::setWalletData(const WalletStruct &data) {
+    walletId = data.walletId;
+    transactions.clear();
+    for (auto& transactionData : data.transactions) {
+        BaseTransaction transaction;
+        transaction.fromTransactionStruct(transactionData);
+        transactions.push_back(transaction);
+    }
+    currencyType = data.currencyType;
+    balance = data.balance;
+    nativeBalance = data.nativeBalance;
+    bonusBalance = data.bonusBalance;
+    moneySpent = data.moneySpent;
+    isOutsideWallet = data.isOutsideWallet;
+    notes = data.notes;
+}
+
+bool Wallet::getIsOutWallet() {
+    return isOutsideWallet;
 }

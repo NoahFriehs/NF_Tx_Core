@@ -8,8 +8,9 @@
 
 #include <string>
 #include <ctime>
-#include "Enums.h"
-#include "Structs.h"
+#include "../Enums.h"
+#include "../Structs.h"
+#include "TransactionStruct.h"
 
 class BaseTransaction {
 
@@ -48,6 +49,10 @@ public:
     long double getToAmount();
 
     TransactionData getTransactionData();
+
+    TransactionStruct getTransactionStruct();
+
+    void fromTransactionStruct(const TransactionStruct& data);
 
 private:
     int transactionId{};

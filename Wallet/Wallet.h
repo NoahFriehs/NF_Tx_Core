@@ -8,7 +8,8 @@
 
 #include <vector>
 #include <memory>
-#include "BaseTransaction.h"
+#include "../Transaction/BaseTransaction.h"
+#include "WalletStruct.h"
 
 class Wallet {
 public:
@@ -49,7 +50,13 @@ public:
 
     std::unique_ptr<WalletData> getWalletData();
 
+    WalletStruct* getWalletStruct();
+
+    void setWalletData(const WalletStruct& data);
+
     void setCurrencyType(std::string currencyType_);
+
+    bool getIsOutWallet();
 
 private:
     int walletId{};

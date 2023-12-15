@@ -3,7 +3,7 @@
 //
 
 #include "BaseTransaction.h"
-#include "Util.h"
+#include "../Util/Util.h"
 
 int txIdCounter;    //TODO: be careful with this when loading from DB
 
@@ -113,4 +113,44 @@ void BaseTransaction::parseCard(const std::string &txString) {
     transactionTypeString = tx[1];
     transactionType = STRING;
 
+}
+
+TransactionStruct BaseTransaction::getTransactionStruct() {
+    TransactionStruct data;
+    data.transactionId = transactionId;
+    data.walletId = walletId;
+    data.fromWalletId = fromWalletId;
+    data.description = description;
+    data.transactionDate = transactionDate;
+    data.currencyType = currencyType;
+    data.toCurrencyType = toCurrencyType;
+    data.amount = amount;
+    data.toAmount = toAmount;
+    data.nativeAmount = nativeAmount;
+    data.amountBonus = amountBonus;
+    data.transactionType = transactionType;
+    data.transactionTypeString = transactionTypeString;
+    data.transactionHash = transactionHash;
+    data.isOutsideTransaction = isOutsideTransaction;
+    data.notes = notes;
+    return data;
+}
+
+void BaseTransaction::fromTransactionStruct(const TransactionStruct &data) {
+    transactionId = data.transactionId;
+    walletId = data.walletId;
+    fromWalletId = data.fromWalletId;
+    description = data.description;
+    transactionDate = data.transactionDate;
+    currencyType = data.currencyType;
+    toCurrencyType = data.toCurrencyType;
+    amount = data.amount;
+    toAmount = data.toAmount;
+    nativeAmount = data.nativeAmount;
+    amountBonus = data.amountBonus;
+    transactionType = data.transactionType;
+    transactionTypeString = data.transactionTypeString;
+    transactionHash = data.transactionHash;
+    isOutsideTransaction = data.isOutsideTransaction;
+    notes = data.notes;
 }

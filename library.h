@@ -1,3 +1,5 @@
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wreturn-type-c-linkage"  // Ignore warning about C linkage
 #ifndef NF_TX_CORE_LIBRARY_H
 #define NF_TX_CORE_LIBRARY_H
 
@@ -11,10 +13,13 @@ bool init();
 
 bool initWithData(const std::vector<std::string> &data, uint mode);
 
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wreturn-type-c-linkage"  // Ignore warning about C++ linkage
+void save();
+
+void loadData();
+
+void calculateBalances();
+
 std::vector<std::string> getCurrencies();
-#pragma clang diagnostic pop
 
 void setPrice(std::vector<double> prices);
 
@@ -49,3 +54,5 @@ std::vector<std::string> getCardTransactionsAsStrings();
 }
 
 #endif //NF_TX_CORE_LIBRARY_H
+
+#pragma clang diagnostic pop

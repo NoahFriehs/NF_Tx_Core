@@ -43,6 +43,24 @@ public:
         return initialized_;
     }
 
+    void saveData() {
+        std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
+        if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
+        transactionManager->saveData();
+    }
+
+    void loadData() {
+        std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
+        if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
+        return transactionManager->loadData();
+    }
+
+    bool checkSavedData() {
+        std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
+        if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
+        return transactionManager->checkSavedData();
+    }
+
 private:
 
     bool initialized_ = false;

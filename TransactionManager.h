@@ -9,11 +9,12 @@
 #include <vector>
 #include <map>
 #include <mutex>
-#include "BaseTransaction.h"
-#include "Wallet.h"
-#include "WalletBalance.h"
+#include "Transaction/BaseTransaction.h"
+#include "Wallet/Wallet.h"
+#include "Wallet/WalletBalance.h"
 #include "Price/AssetValue.h"
 #include "Enums.h"
+#include "TransactionManager/TMState.h"
 
 class TransactionManager {
 public:
@@ -63,6 +64,12 @@ public:
 
     std::unique_ptr<Wallet> getWallet(int walletId);
 
+    void saveData();
+
+    void loadData();
+
+    bool checkSavedData();
+
 private:
     bool hasTxData = false;
     bool hasCardTxData = false;
@@ -108,6 +115,15 @@ private:
     std::string checkForRefund(std::string& tt);
 
     Wallet* getNonStrictWallet(std::string& tt);
+
+    TMState getTransactionManagerState();
+
+    void setTransactionManagerState(const TransactionManagerState& state);
+
+    static bool checkIfFileExists(const std::string& file);
+
+    void clearAll();
+
 };
 
 

@@ -9,12 +9,29 @@
 #include <utility>
 //#include <jni.h>
 
-extern "C" {
+
 
 
 
 bool init() {
-    return DataHolder::GetInstance().isInitialized();
+
+    if (DataHolder::GetInstance().isInitialized()) {
+        FileLog::i("library", "Already initialized");
+        return true;
+    }
+
+    FileLog::init("my_log.txt", true, 3);
+
+    FileLog::i("library", "Initializing...");
+    DataHolder::GetInstance().SetTransactionManager(new TransactionManager());
+    if (DataHolder::GetInstance().checkSavedData()) {
+        FileLog::i("library", "Saved data found, loading...");
+        DataHolder::GetInstance().loadData();
+        FileLog::i("library", "Done");
+        return true;
+    }
+    FileLog::i("library", "No saved data found");
+    return false;
 }
 
 bool initWithData(const std::vector<std::string> &data, uint mode) {
@@ -95,7 +112,7 @@ double getMoneySpent(int walletId) {
     return DataHolder::GetInstance().GetTransactionManager()->getMoneySpent(walletId);
 }
 
-}
+
 
 std::vector<std::string> getWalletsAsStrings() {
     std::map<std::string, Wallet> wallets = DataHolder::GetInstance().GetTransactionManager()->getWallets();
@@ -149,6 +166,18 @@ std::string getWalletAsString(int walletId) {
     auto wallet = DataHolder::GetInstance().GetTransactionManager()->getWallet(walletId);
     if (wallet == nullptr) return "";
     return wallet->getWalletData()->serializeToXml();
+}
+
+void save() {
+    DataHolder::GetInstance().saveData();
+}
+
+void loadData() {
+    DataHolder::GetInstance().loadData();
+}
+
+void calculateBalances() {
+    DataHolder::GetInstance().GetTransactionManager()->calculateWalletBalances();
 }
 
 

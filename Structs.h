@@ -8,10 +8,12 @@
 #include <string>
 #include <ctime>
 #include <sstream>
+#include <memory>
 #include "Enums.h"
 #include "XML/rapidxml.hpp"
 #include "XML/rapidxml_print.hpp"
 #include "XML/rapidxml_utils.hpp"
+#include "MagicNumbers.h"
 
 struct TransactionData {
     int transactionId{};
@@ -31,11 +33,11 @@ struct TransactionData {
     bool isOutsideTransaction = false;
     std::string notes = {};
 
-    std::string serializeToXml() {
+    [[nodiscard]] std::string serializeToXml() const {
         return serializeToXml(*this);
     }
 
-    std::string serializeToXml(const TransactionData &transaction) {
+    static std::string serializeToXml(const TransactionData &transaction) {
         rapidxml::xml_document<> doc;
 
         auto *root = doc.allocate_node(rapidxml::node_element, "TransactionData");
@@ -192,6 +194,29 @@ struct WalletData {
         wallet.isOutsideWallet = (getTagValue("isOutsideWallet") == "true");
         wallet.notes = getTagValue("notes");
     }
+};
+
+
+struct TransactionManagerState{
+    bool isBig = false;
+    bool hasTxData = false;
+    bool hasCardTxData = false;
+    bool isReadyFlag = false;
+    char currencies[MAX_WALLETS][MAX_STRING_LENGTH] = {};
+    char cardTxTypes[MAX_WALLETS][MAX_STRING_LENGTH] = {};
+};
+
+
+
+struct BigTransactionMangerState : TransactionManagerState {
+
+    char bigCurrencies[BIG_MAX_WALLETS][MAX_STRING_LENGTH] = {};
+    char bigCardTxTypes[BIG_MAX_WALLETS][MAX_STRING_LENGTH] = {};
+
+    BigTransactionMangerState(){
+        isBig = true;
+    }
+
 };
 
 #endif //NF_TX_CORE_STRUCTS_H
