@@ -113,7 +113,6 @@ double getMoneySpent(int walletId) {
 }
 
 
-
 std::vector<std::string> getWalletsAsStrings() {
     std::map<std::string, Wallet> wallets = DataHolder::GetInstance().GetTransactionManager()->getWallets();
     std::vector<std::string> vec;

@@ -34,7 +34,7 @@ public:
 
     bool isReady();
 
-    void setPrices(std::vector<double> prices);
+    void setPrices(const std::vector<double> &prices);
 
     double getTotalMoneySpent();
 
@@ -110,17 +110,17 @@ private:
 
     void addCardTransactionsToWallets();
 
-    std::string checkCardTxTypes(const std::string& tt, const std::string& txType);
+    std::string checkCardTxTypes(const std::string &tt, const std::string &txType);
 
-    std::string checkForRefund(std::string& tt);
+    std::string checkForRefund(std::string &tt);
 
-    Wallet* getNonStrictWallet(std::string& tt);
+    Wallet *getNonStrictWallet(std::string &tt);
 
     TMState getTransactionManagerState();
 
-    void setTransactionManagerState(const TransactionManagerState& state);
+    void setTransactionManagerState(const TransactionManagerState &state);
 
-    static bool checkIfFileExists(const std::string& file);
+    static bool checkIfFileExists(const std::string &file);
 
     void clearAll();
 

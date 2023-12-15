@@ -23,7 +23,7 @@ public:
 
     bool withdraw(BaseTransaction &transaction);
 
-    void addBonus(BaseTransaction &transaction);
+    //void addBonus(BaseTransaction &transaction);
 
     void updateTransaction(BaseTransaction &transaction);
 
@@ -50,9 +50,9 @@ public:
 
     std::unique_ptr<WalletData> getWalletData();
 
-    WalletStruct* getWalletStruct();
+    WalletStruct *getWalletStruct();
 
-    void setWalletData(const WalletStruct& data);
+    void setWalletData(const WalletStruct &data);
 
     void setCurrencyType(std::string currencyType_);
 

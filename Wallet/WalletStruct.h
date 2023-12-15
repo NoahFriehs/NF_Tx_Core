@@ -36,7 +36,7 @@ struct CWalletStruct {
     char notes[MAX_STRING_LENGTH]{};
 
     // Function to convert from a CWalletStruct to WalletStruct
-    static WalletStruct convertToWalletStruct(const CWalletStruct& data) {
+    static WalletStruct convertToWalletStruct(const CWalletStruct &data) {
         WalletStruct tmStruct;
         tmStruct.walletId = data.walletId;
         tmStruct.currencyType = std::string(data.currencyType);
@@ -55,7 +55,7 @@ struct CWalletStruct {
     }
 
     // Function to convert from a WalletStruct to CWalletStruct
-    static CWalletStruct convertToCWalletStruct(const WalletStruct& data) {
+    static CWalletStruct convertToCWalletStruct(const WalletStruct &data) {
         CWalletStruct tmStruct;
         tmStruct.walletId = data.walletId;
         stringToCharArray(tmStruct.currencyType, data.currencyType);

@@ -32,7 +32,6 @@ void TransactionParser::parseFromCsv(Mode mode) {
             break;
         case Custom:
             throw std::invalid_argument("Custom mode not implemented");
-            break;
         case Default:
             parseCDC();
             break;

@@ -5,7 +5,7 @@
 #include "CharUtil.h"
 
 // Utility function to copy a 2D char array
-void copyCharArray(char** destination, char** source, int rows, int cols) {
+void copyCharArray(char **destination, char **source, int rows, int cols) {
     for (int i = 0; i < rows; ++i) {
         for (int j = 0; j < cols; ++j) {
             destination[i][j] = source[i][j];
@@ -13,7 +13,7 @@ void copyCharArray(char** destination, char** source, int rows, int cols) {
     }
 }
 
-void stringToCharArray(char destination[MAX_STRING_LENGTH], const std::string& src) {
+void stringToCharArray(char destination[MAX_STRING_LENGTH], const std::string &src) {
     if (src.size() <= MAX_STRING_LENGTH) {
         std::strcpy(destination, src.c_str());
     } else {
@@ -27,6 +27,6 @@ std::string charArrayToString(char source[]) {
     return std::string(source);
 }
 
-void copyCharArrayToString(std::string& destination, const char source[MAX_STRING_LENGTH]) {
+void copyCharArrayToString(std::string &destination, const char source[MAX_STRING_LENGTH]) {
     destination = source;
 }

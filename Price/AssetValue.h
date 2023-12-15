@@ -23,8 +23,6 @@ public:
 
     double getPrice(const std::string &symbol);
 
-    void loadCache(const std::vector<std::string> &symbols);
-
     void
     loadCacheWithData(const std::vector<std::string> &symbols, const std::vector<double> &prices);
 };

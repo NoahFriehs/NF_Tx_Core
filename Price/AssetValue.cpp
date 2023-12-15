@@ -21,10 +21,6 @@ double AssetValue::getPrice(const std::string &symbol) {
     return staticPrices.prices[symbol];
 }
 
-void AssetValue::loadCache(const std::vector<std::string> &symbols) {
-    // Implementation details for loading cache
-    throw std::runtime_error("Not implemented");
-}
 
 void AssetValue::loadCacheWithData(const std::vector<std::string> &symbols,
                                    const std::vector<double> &prices) {

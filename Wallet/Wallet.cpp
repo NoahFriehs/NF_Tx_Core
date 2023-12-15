@@ -93,10 +93,10 @@ void Wallet::setCurrencyType(std::string currencyType_) {
     currencyType = currencyType_;
 }
 
-WalletStruct* Wallet::getWalletStruct() {
+WalletStruct *Wallet::getWalletStruct() {
     auto data = new WalletStruct();
     data->walletId = walletId;
-    for (auto& transaction : transactions) {
+    for (auto &transaction: transactions) {
         data->transactions.push_back(transaction.getTransactionStruct());
     }
     data->currencyType = currencyType;
@@ -112,7 +112,7 @@ WalletStruct* Wallet::getWalletStruct() {
 void Wallet::setWalletData(const WalletStruct &data) {
     walletId = data.walletId;
     transactions.clear();
-    for (auto& transactionData : data.transactions) {
+    for (auto &transactionData: data.transactions) {
         BaseTransaction transaction;
         transaction.fromTransactionStruct(transactionData);
         transactions.push_back(transaction);
@@ -128,4 +128,29 @@ void Wallet::setWalletData(const WalletStruct &data) {
 
 bool Wallet::getIsOutWallet() {
     return isOutsideWallet;
+}
+
+void Wallet::updateTransaction(BaseTransaction &transaction) {
+    for (auto &tx: transactions) {
+        if (tx.getTransactionStruct().transactionId == transaction.getTransactionStruct().transactionId) {
+            tx = transaction;
+            return;
+        }
+    }
+}
+
+void Wallet::removeTransaction(BaseTransaction &transaction) {
+    for (auto &tx: transactions) {
+        int transactionId = tx.getTransactionId();
+        if (transactionId == transaction.getTransactionId()) {
+            balance -= tx.getAmount();
+            moneySpent -= tx.getNativeAmount();
+            bonusBalance -= tx.getAmountBonus();
+            transactions.erase(std::remove_if(transactions.begin(), transactions.end(),
+                                              [transactionId, &tx](const BaseTransaction &transaction) {
+                                                  return tx.getTransactionId() == transactionId;
+                                              }), transactions.end());
+            return;
+        }
+    }
 }

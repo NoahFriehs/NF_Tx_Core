@@ -68,15 +68,15 @@ std::string BaseTransaction::getTransactionTypeString() {
     return transactionTypeString;
 }
 
-int BaseTransaction::getWalletId() {
+int BaseTransaction::getWalletId() const {
     return walletId;
 }
 
-long double BaseTransaction::getAmountBonus() {
+long double BaseTransaction::getAmountBonus() const {
     return amountBonus;
 }
 
-long double BaseTransaction::getToAmount() {
+long double BaseTransaction::getToAmount() const {
     return toAmount;
 }
 
@@ -153,4 +153,21 @@ void BaseTransaction::fromTransactionStruct(const TransactionStruct &data) {
     transactionHash = data.transactionHash;
     isOutsideTransaction = data.isOutsideTransaction;
     notes = data.notes;
+}
+
+void BaseTransaction::setTxIdCounter(int txIdCounter_) {
+    if (txIdCounter_ <= txIdCounter)
+        txIdCounter = txIdCounter_;
+    else {
+        FileLog::e("BaseTransaction", "trying to set a invalid txIdCounter");
+        throw std::runtime_error("trying to set a invalid txIdCounter");
+    }
+}
+
+int BaseTransaction::getTxIdCounter() {
+    return txIdCounter;
+}
+
+int BaseTransaction::getTransactionId() {
+    return transactionId;
 }

@@ -19,10 +19,11 @@ public:
 
     ~BaseTransaction();
 
-
     void parseCDC(const std::string &txString);
 
     void parseCard(const std::string &txString);
+
+    int getTransactionId();
 
     void setAmountToAmountBonus();
 
@@ -42,17 +43,21 @@ public:
 
     std::string getTransactionTypeString();
 
-    int getWalletId();
+    [[nodiscard]] int getWalletId() const;
 
-    long double getAmountBonus();
+    [[nodiscard]] long double getAmountBonus() const;
 
-    long double getToAmount();
+    [[nodiscard]] long double getToAmount() const;
 
     TransactionData getTransactionData();
 
     TransactionStruct getTransactionStruct();
 
-    void fromTransactionStruct(const TransactionStruct& data);
+    void fromTransactionStruct(const TransactionStruct &data);
+
+    static void setTxIdCounter(int txIdCounter_);
+
+    static int getTxIdCounter();
 
 private:
     int transactionId{};

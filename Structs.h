@@ -134,7 +134,7 @@ struct WalletData {
     bool isOutsideWallet{};
     std::string notes = {};
 
-    std::string serializeToXml() {
+    [[nodiscard]] std::string serializeToXml() const {
         return serializeToXml(*this);
     }
 
@@ -167,7 +167,7 @@ struct WalletData {
         return xmlString;
     }
 
-    void deserializeFromXml(const std::string &xml, WalletData &wallet) {
+    static void deserializeFromXml(const std::string &xml, WalletData &wallet) {
         size_t pos = 0;
 
         auto getTagValue = [&](const std::string &tag) -> std::string {
@@ -197,15 +197,15 @@ struct WalletData {
 };
 
 
-struct TransactionManagerState{
+struct TransactionManagerState {
     bool isBig = false;
     bool hasTxData = false;
     bool hasCardTxData = false;
     bool isReadyFlag = false;
+    int txIdCounter = 0;
     char currencies[MAX_WALLETS][MAX_STRING_LENGTH] = {};
     char cardTxTypes[MAX_WALLETS][MAX_STRING_LENGTH] = {};
 };
-
 
 
 struct BigTransactionMangerState : TransactionManagerState {
@@ -213,7 +213,7 @@ struct BigTransactionMangerState : TransactionManagerState {
     char bigCurrencies[BIG_MAX_WALLETS][MAX_STRING_LENGTH] = {};
     char bigCardTxTypes[BIG_MAX_WALLETS][MAX_STRING_LENGTH] = {};
 
-    BigTransactionMangerState(){
+    BigTransactionMangerState() {
         isBig = true;
     }
 

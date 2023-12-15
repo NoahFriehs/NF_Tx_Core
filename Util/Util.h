@@ -21,6 +21,7 @@ std::vector<std::string> splitString(const std::string &input, char delimiter);
 class TimestampConverter {
 public:
     static std::tm stringToTm(const std::string &timestamp_str);
+
     static std::string tmToString(const std::tm &timestamp_tm);
 };
 

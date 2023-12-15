@@ -50,7 +50,7 @@ struct CTransactionStruct {
     char notes[255]{}; // Assuming a maximum length for the notes
 
     // Function to convert from a CTransactionStruct to TransactionStruct
-    static TransactionStruct convertToTransactionStruct(const CTransactionStruct& data) {
+    static TransactionStruct convertToTransactionStruct(const CTransactionStruct &data) {
         TransactionStruct tmStruct;
         tmStruct.transactionId = data.transactionId;
         tmStruct.walletId = data.walletId;
@@ -73,7 +73,7 @@ struct CTransactionStruct {
     }
 
     // Function to convert from a TransactionStruct to CTransactionStruct
-    static CTransactionStruct convertToCTransactionStruct(const TransactionStruct& originalStruct) {
+    static CTransactionStruct convertToCTransactionStruct(const TransactionStruct &originalStruct) {
         CTransactionStruct cTMStruct;
         // Copying data from original to new struct
         cTMStruct.transactionId = originalStruct.transactionId;

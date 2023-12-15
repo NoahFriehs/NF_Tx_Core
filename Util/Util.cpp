@@ -7,7 +7,7 @@
 #include <iomanip>
 #include <algorithm>
 
-TransactionType ttConverter(const std::string &s){
+TransactionType ttConverter(const std::string &s) {
     std::string lowercase = s;
     // Convert the input string to lowercase for case-insensitive comparison
     std::transform(lowercase.begin(), lowercase.end(), lowercase.begin(), ::tolower);
@@ -63,6 +63,7 @@ std::tm TimestampConverter::stringToTm(const std::string &timestamp_str) {
     }
     return timestamp_tm;
 }
+
 std::string TimestampConverter::tmToString(const std::tm &timestamp_tm) {
     std::ostringstream ss;
     ss << std::put_time(&timestamp_tm, "%Y-%m-%d %H:%M:%S");
