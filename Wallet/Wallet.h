@@ -19,7 +19,7 @@ public:
 
     ~Wallet();
 
-    bool addTransaction(BaseTransaction &transaction);
+    bool addTransaction(BaseTransaction &transaction, bool overrideTTS = false);
 
     bool withdraw(BaseTransaction &transaction);
 
@@ -33,7 +33,7 @@ public:
 
     void setIsOutWallet(bool b);
 
-    int getWalletId();
+    int getWalletId() const;
 
     long double getNativeBalance() const;
 
@@ -56,7 +56,7 @@ public:
 
     void setCurrencyType(std::string currencyType_);
 
-    bool getIsOutWallet();
+    bool getIsOutWallet() const;
 
 private:
     int walletId{};

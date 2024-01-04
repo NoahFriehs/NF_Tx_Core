@@ -25,8 +25,9 @@ void Wallet::setIsOutWallet(bool b) {
     isOutsideWallet = b;
 }
 
-bool Wallet::addTransaction(BaseTransaction &transaction) {
+bool Wallet::addTransaction(BaseTransaction &transaction, bool overrideTTS) {
     transaction.setWalletId(walletId);
+    if (overrideTTS) transaction.setTransactionTypeString(currencyType);
     transactions.push_back(transaction);
     balance += transaction.getAmount();
     moneySpent += transaction.getNativeAmount();
@@ -34,7 +35,7 @@ bool Wallet::addTransaction(BaseTransaction &transaction) {
     return true;
 }
 
-int Wallet::getWalletId() {
+int Wallet::getWalletId() const {
     return walletId;
 }
 
@@ -90,7 +91,7 @@ std::unique_ptr<WalletData> Wallet::getWalletData() {
 }
 
 void Wallet::setCurrencyType(std::string currencyType_) {
-    currencyType = currencyType_;
+    currencyType = std::move(currencyType_);
 }
 
 WalletStruct *Wallet::getWalletStruct() {
@@ -126,7 +127,7 @@ void Wallet::setWalletData(const WalletStruct &data) {
     notes = data.notes;
 }
 
-bool Wallet::getIsOutWallet() {
+bool Wallet::getIsOutWallet() const {
     return isOutsideWallet;
 }
 

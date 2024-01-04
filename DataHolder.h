@@ -8,6 +8,7 @@
 
 #include <mutex>
 #include <stdexcept>
+#include <utility>
 #include "TransactionManager.h"
 
 class DataHolder {
@@ -34,6 +35,7 @@ public:
     TransactionManager *GetTransactionManager() {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
+        transactionManager->checkTransactionManagerState();
         return transactionManager;
     }
 
@@ -43,16 +45,16 @@ public:
         return initialized_;
     }
 
-    void saveData() {
+    void saveData(const std::string &filePath) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
-        transactionManager->saveData();
+        transactionManager->saveData(filePath);
     }
 
-    void loadData() {
+    void loadData(const std::string &filePath) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
-        return transactionManager->loadData();
+        return transactionManager->loadData(filePath);
     }
 
     bool checkSavedData() {

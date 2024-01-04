@@ -13,20 +13,20 @@
 
 
 
-bool init() {
+bool init(const std::string &logFilePath, const std::string &loadDirPath) {
 
     if (DataHolder::GetInstance().isInitialized()) {
         FileLog::i("library", "Already initialized");
         return true;
     }
 
-    FileLog::init("my_log.txt", true, 3);
+    FileLog::init(logFilePath, true, 3);
 
     FileLog::i("library", "Initializing...");
     DataHolder::GetInstance().SetTransactionManager(new TransactionManager());
     if (DataHolder::GetInstance().checkSavedData()) {
         FileLog::i("library", "Saved data found, loading...");
-        DataHolder::GetInstance().loadData();
+        DataHolder::GetInstance().loadData(loadDirPath);
         FileLog::i("library", "Done");
         return true;
     }
@@ -34,9 +34,9 @@ bool init() {
     return false;
 }
 
-bool initWithData(const std::vector<std::string> &data, uint mode) {
+bool initWithData(const std::vector<std::string> &data, uint mode, const std::string &logFilePath) {
 
-    FileLog::init("my_log.txt", true, 3);
+    FileLog::init(logFilePath, true, 3);
 
     FileLog::i("library", "Initializing with data...");
     FileLog::i("library", "Data size: " + std::to_string(data.size()));
@@ -80,9 +80,9 @@ std::vector<std::string> getCurrencies() {
     return DataHolder::GetInstance().GetTransactionManager()->getCurrencies();
 }
 
-void setPrice(std::vector<double> prices) {
+void setPrice(const std::vector<double> &prices) {
     FileLog::i("library", "Setting prices and calculating wallet balances...");
-    DataHolder::GetInstance().GetTransactionManager()->setPrices(std::move(prices));
+    DataHolder::GetInstance().GetTransactionManager()->setPrices(prices);
     DataHolder::GetInstance().GetTransactionManager()->calculateWalletBalances();
     FileLog::i("library", "Done");
 }
@@ -163,20 +163,67 @@ double getTotalBonusCard() {
 
 std::string getWalletAsString(int walletId) {
     auto wallet = DataHolder::GetInstance().GetTransactionManager()->getWallet(walletId);
+    if (wallet == nullptr) {
+        wallet = DataHolder::GetInstance().GetTransactionManager()->getCardWallet(walletId);
+    }
     if (wallet == nullptr) return "";
     return wallet->getWalletData()->serializeToXml();
 }
 
-void save() {
-    DataHolder::GetInstance().saveData();
+void save(const std::string &filePath) {
+    DataHolder::GetInstance().saveData(filePath);
 }
 
-void loadData() {
-    DataHolder::GetInstance().loadData();
+void loadData(const std::string &filePath) {
+    DataHolder::GetInstance().loadData(filePath);
 }
 
 void calculateBalances() {
     DataHolder::GetInstance().GetTransactionManager()->calculateWalletBalances();
+}
+
+void setWalletData(const std::vector<std::string> &data) {
+    std::vector<WalletData> vec;
+    for (auto &wallet: data) {
+        WalletData walletData;
+        WalletData::deserializeFromXml(wallet, walletData);
+        vec.emplace_back(walletData);
+    }
+    DataHolder::GetInstance().GetTransactionManager()->setWalletData(vec);
+}
+
+void setCardWalletData(const std::vector<std::string> &data) {
+    std::vector<WalletData> vec;
+    for (auto &wallet: data) {
+        WalletData walletData;
+        WalletData::deserializeFromXml(wallet, walletData);
+        vec.emplace_back(walletData);
+    }
+    DataHolder::GetInstance().GetTransactionManager()->setCardWalletData(vec);
+}
+
+void setTransactionData(const std::vector<std::string> &data) {
+    std::vector<TransactionData> vec;
+    for (auto &tx: data) {
+        TransactionData txData;
+        txData.deserializeFromXml(tx);
+        vec.emplace_back(txData);
+    }
+    DataHolder::GetInstance().GetTransactionManager()->setTransactionData(vec);
+}
+
+void setCardTransactionData(const std::vector<std::string> &data) {
+    std::vector<TransactionData> vec;
+    for (auto &tx: data) {
+        TransactionData txData;
+        txData.deserializeFromXml(tx);
+        vec.emplace_back(txData);
+    }
+    DataHolder::GetInstance().GetTransactionManager()->setCardTransactionData(vec);
+}
+
+void clearAll() {
+    DataHolder::GetInstance().GetTransactionManager()->clearAll();
 }
 
 

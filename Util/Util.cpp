@@ -69,3 +69,9 @@ std::string TimestampConverter::tmToString(const std::tm &timestamp_tm) {
     ss << std::put_time(&timestamp_tm, "%Y-%m-%d %H:%M:%S");
     return ss.str();
 }
+
+std::string removePrefix(std::string string, const std::string &prefixToRemove) {
+    if (string.find(prefixToRemove) == 0)
+        string.erase(0, prefixToRemove.length());
+    return string;
+}

@@ -32,25 +32,25 @@ public:
 
     std::vector<std::string> getCurrencies();
 
-    bool isReady();
+    bool isReady() const;
 
     void setPrices(const std::vector<double> &prices);
 
-    double getTotalMoneySpent();
+    double getTotalMoneySpent() const;
 
-    double getTotalMoneySpentCard();
+    double getTotalMoneySpentCard() const;
 
     std::vector<BaseTransaction> getTransactions();
 
     std::vector<BaseTransaction> getCardTransactions();
 
-    double getTotalValueOfAssets();
+    double getTotalValueOfAssets() const;
 
-    double getTotalValueOfAssetsCard();
+    double getTotalValueOfAssetsCard() const;
 
-    double getTotalBonus();
+    double getTotalBonus() const;
 
-    double getTotalBonusCard();
+    double getTotalBonusCard() const;
 
     double getValueOfAssets(int walletId);
 
@@ -64,11 +64,25 @@ public:
 
     std::unique_ptr<Wallet> getWallet(int walletId);
 
-    void saveData();
+    void saveData(const std::string &filePath);
 
-    void loadData();
+    void loadData(const std::string &filePath);
 
     bool checkSavedData();
+
+    void setWalletData(std::vector<WalletData> _wallets);
+
+    void setCardWalletData(std::vector<WalletData> _cardWallets);
+
+    void setTransactionData(std::vector<TransactionData> txData);
+
+    void setCardTransactionData(std::vector<TransactionData> txData);
+
+    void checkTransactionManagerState();
+
+    void clearAll();
+
+    std::unique_ptr<Wallet> getCardWallet(int walletId);
 
 private:
     bool hasTxData = false;
@@ -121,8 +135,6 @@ private:
     void setTransactionManagerState(const TransactionManagerState &state);
 
     static bool checkIfFileExists(const std::string &file);
-
-    void clearAll();
 
 };
 

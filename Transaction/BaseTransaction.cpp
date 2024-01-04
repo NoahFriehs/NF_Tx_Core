@@ -36,11 +36,11 @@ std::string BaseTransaction::getCurrencyType() {
 }
 
 
-long double BaseTransaction::getAmount() {
+long double BaseTransaction::getAmount() const {
     return amount;
 }
 
-long double BaseTransaction::getNativeAmount() {
+long double BaseTransaction::getNativeAmount() const {
     return nativeAmount;
 }
 
@@ -168,6 +168,29 @@ int BaseTransaction::getTxIdCounter() {
     return txIdCounter;
 }
 
-int BaseTransaction::getTransactionId() {
+int BaseTransaction::getTransactionId() const {
     return transactionId;
+}
+
+void BaseTransaction::setTransactionData(const TransactionStruct &txStruct) {
+    transactionId = txStruct.transactionId;
+    walletId = txStruct.walletId;
+    fromWalletId = txStruct.fromWalletId;
+    description = txStruct.description;
+    transactionDate = txStruct.transactionDate;
+    currencyType = txStruct.currencyType;
+    toCurrencyType = txStruct.toCurrencyType;
+    amount = txStruct.amount;
+    toAmount = txStruct.toAmount;
+    nativeAmount = txStruct.nativeAmount;
+    amountBonus = txStruct.amountBonus;
+    transactionType = txStruct.transactionType;
+    transactionTypeString = txStruct.transactionTypeString;
+    transactionHash = txStruct.transactionHash;
+    isOutsideTransaction = txStruct.isOutsideTransaction;
+    notes = txStruct.notes;
+}
+
+void BaseTransaction::setTransactionTypeString(const std::string &transactionTypeStringToSet) {
+    //BaseTransaction::transactionTypeString = transactionTypeStringToSet;
 }

@@ -23,7 +23,7 @@ public:
 
     void parseCard(const std::string &txString);
 
-    int getTransactionId();
+    int getTransactionId() const;
 
     void setAmountToAmountBonus();
 
@@ -33,9 +33,9 @@ public:
 
     std::string getCurrencyType();
 
-    long double getAmount();
+    long double getAmount() const;
 
-    long double getNativeAmount();
+    long double getNativeAmount() const;
 
     TransactionType getTransactionType();
 
@@ -59,6 +59,8 @@ public:
 
     static int getTxIdCounter();
 
+    void setTransactionData(const TransactionStruct &txStruct);
+
 private:
     int transactionId{};
     int walletId = -1;
@@ -73,6 +75,10 @@ private:
     long double amountBonus{};
     TransactionType transactionType = NONE;
     std::string transactionTypeString = {};
+public:
+    void setTransactionTypeString(const std::string &transactionTypeStringToSet);
+
+private:
     std::string transactionHash = {};
     bool isOutsideTransaction = false;
     std::string notes = {};

@@ -6,22 +6,38 @@
 #include <vector>
 #include <string>
 
+#ifdef ANDROID
+#pragma message("Building for Android")
+#endif
+
 extern "C" {
 
 
-bool init();
+bool init(const std::string &logFilePath, const std::string &loadDirPath);
 
-bool initWithData(const std::vector<std::string> &data, uint mode);
+bool initWithData(const std::vector<std::string> &data, uint mode, const std::string &logFilePath);
 
-void save();
+void save(const std::string &filePath);
 
-void loadData();
+void loadData(const std::string &filePath);
+
+void calculate();
+
+void clearAll();
+
+void setWalletData(const std::vector<std::string> &data);
+
+void setCardWalletData(const std::vector<std::string> &data);
+
+void setTransactionData(const std::vector<std::string> &data);
+
+void setCardTransactionData(const std::vector<std::string> &data);
 
 void calculateBalances();
 
 std::vector<std::string> getCurrencies();
 
-void setPrice(std::vector<double> prices);
+void setPrice(const std::vector<double> &prices);
 
 double getTotalMoneySpent();
 

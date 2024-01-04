@@ -14,6 +14,7 @@
 #include "XML/rapidxml_print.hpp"
 #include "XML/rapidxml_utils.hpp"
 #include "MagicNumbers.h"
+#include "Wallet/WalletStruct.h"
 
 struct TransactionData {
     int transactionId{};
@@ -28,10 +29,31 @@ struct TransactionData {
     long double nativeAmount{};
     long double amountBonus{};
     int transactionTypeOrdinal = NONE;
-    //std::string transactionTypeString = {};
+    std::string transactionTypeString = {};
     std::string transactionHash = {};
     bool isOutsideTransaction = false;
     std::string notes = {};
+
+    TransactionStruct getTransactionStruct() const {
+        TransactionStruct transactionStruct;
+        transactionStruct.transactionId = transactionId;
+        transactionStruct.walletId = walletId;
+        transactionStruct.fromWalletId = fromWalletId;
+        transactionStruct.description = description;
+        transactionStruct.transactionDate = transactionDate;
+        transactionStruct.currencyType = currencyType;
+        transactionStruct.toCurrencyType = toCurrencyType;
+        transactionStruct.amount = amount;
+        transactionStruct.toAmount = toAmount;
+        transactionStruct.nativeAmount = nativeAmount;
+        transactionStruct.amountBonus = amountBonus;
+        transactionStruct.transactionType = static_cast<TransactionType>(transactionTypeOrdinal);
+        transactionStruct.transactionTypeString = transactionTypeString;
+        transactionStruct.transactionHash = transactionHash;
+        transactionStruct.isOutsideTransaction = isOutsideTransaction;
+        transactionStruct.notes = notes;
+        return transactionStruct;
+    }
 
     [[nodiscard]] std::string serializeToXml() const {
         return serializeToXml(*this);
@@ -56,21 +78,22 @@ struct TransactionData {
         addNode("description", transaction.description);
 
         // Format the date and time as a string
-        char dateTimeStr[100];
+        char dateTimeStr[20];
         std::strftime(dateTimeStr, sizeof(dateTimeStr), "%Y-%m-%d %H:%M:%S",
                       &transaction.transactionDate);
-        std::string dateTimeString = dateTimeStr;
-        addNode("transactionDate", dateTimeString.c_str());
+        std::string dateTimeString = std::string(dateTimeStr);
+        addNode("transactionDate", dateTimeString);
 
         addNode("currencyType", transaction.currencyType);
         addNode("toCurrencyType", transaction.toCurrencyType);
-        addNode("amount", std::to_string(transaction.amount).c_str());
-        addNode("toAmount", std::to_string(transaction.toAmount).c_str());
-        addNode("nativeAmount", std::to_string(transaction.nativeAmount).c_str());
-        addNode("amountBonus", std::to_string(transaction.amountBonus).c_str());
-        addNode("transactionTypeOrdinal", std::to_string(transaction.transactionTypeOrdinal).c_str());
+        addNode("amount", std::to_string(transaction.amount));
+        addNode("toAmount", std::to_string(transaction.toAmount));
+        addNode("nativeAmount", std::to_string(transaction.nativeAmount));
+        addNode("amountBonus", std::to_string(transaction.amountBonus));
+        addNode("tTO", std::to_string(transaction.transactionTypeOrdinal));
+        addNode("tTS", transaction.transactionTypeString);
         addNode("transactionHash", transaction.transactionHash);
-        addNode("isOutsideTransaction", transaction.isOutsideTransaction ? "true" : "false");
+        addNode("outTx", transaction.isOutsideTransaction ? "true" : "false");
         addNode("notes", transaction.notes);
 
         std::string xmlString;
@@ -115,9 +138,11 @@ struct TransactionData {
         toAmount = std::stold(getTagValue("toAmount"));
         nativeAmount = std::stold(getTagValue("nativeAmount"));
         amountBonus = std::stold(getTagValue("amountBonus"));
-        transactionTypeOrdinal = std::stoi(getTagValue("transactionTypeOrdinal"));
+        transactionTypeOrdinal = std::stoi(getTagValue("tTO"));
+        transactionTypeString = getTagValue("tTS");
         transactionHash = getTagValue("transactionHash");
-        isOutsideTransaction = std::stoi(getTagValue("isOutsideTransaction"));
+        std::string outTx = getTagValue("outTx");
+        isOutsideTransaction = (outTx == "true");
         notes = getTagValue("notes");
     }
 
@@ -133,6 +158,32 @@ struct WalletData {
     double moneySpent{};
     bool isOutsideWallet{};
     std::string notes = {};
+
+    WalletStruct getWalletStruct() const {
+        WalletStruct walletStruct;
+        walletStruct.walletId = walletId;
+        walletStruct.currencyType = currencyType;
+        walletStruct.balance = balance;
+        walletStruct.nativeBalance = nativeBalance;
+        walletStruct.bonusBalance = bonusBalance;
+        walletStruct.moneySpent = moneySpent;
+        walletStruct.isOutsideWallet = isOutsideWallet;
+        walletStruct.notes = notes;
+        return walletStruct;
+    }
+
+    CWalletStruct getCWalletStruct() const {
+        CWalletStruct walletStruct;
+        walletStruct.walletId = walletId;
+        stringToCharArray(walletStruct.currencyType, currencyType);
+        walletStruct.balance = balance;
+        walletStruct.nativeBalance = nativeBalance;
+        walletStruct.bonusBalance = bonusBalance;
+        walletStruct.moneySpent = moneySpent;
+        walletStruct.isOutsideWallet = isOutsideWallet;
+        stringToCharArray(walletStruct.notes, notes);
+        return walletStruct;
+    }
 
     [[nodiscard]] std::string serializeToXml() const {
         return serializeToXml(*this);

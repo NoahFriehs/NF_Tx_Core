@@ -25,4 +25,6 @@ public:
     static std::string tmToString(const std::tm &timestamp_tm);
 };
 
+std::string removePrefix(std::string string, const std::string &prefixToRemove);
+
 #endif //NF_TX_CORE_UTIL_H
