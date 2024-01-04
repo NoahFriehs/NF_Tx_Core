@@ -94,16 +94,16 @@ public:
     bool checkSavedData();
 
     //! Set the wallet data
-    void setWalletData(std::vector<WalletData> _wallets);
+    void setWalletData(const std::vector<WalletData> &_wallets);
 
     //! Set the card wallet data
-    void setCardWalletData(std::vector<WalletData> _cardWallets);
+    void setCardWalletData(const std::vector<WalletData> &_cardWallets);
 
     //! Set the transaction data
-    void setTransactionData(std::vector<TransactionData> txData);
+    void setTransactionData(const std::vector<TransactionData> &txData);
 
     //! Set the card transaction data
-    void setCardTransactionData(std::vector<TransactionData> txData);
+    void setCardTransactionData(const std::vector<TransactionData> &txData);
 
     //! Checks the state of the TransactionManager
     void checkTransactionManagerState();
@@ -115,7 +115,7 @@ public:
     std::unique_ptr<Wallet> getCardWallet(int walletId);
 
     //! \brief Returns the active modes. (1 = Crypto, 2 = Card, 3 = Crypto + Card)
-    int getActiveModes();
+    int getActiveModes() const;
 
 private:
     bool hasTxData = false;

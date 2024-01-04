@@ -310,13 +310,7 @@ JNIEXPORT jdouble JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalBonus(JNIEnv *env, jobject thiz) {
     return getTotalBonus();
 }
-extern "C"
-JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_getValueOfAssets(JNIEnv *env,
-                                                                                       jobject thiz,
-                                                                                       jint wallet_id) {
-    return getValueOfAssets(wallet_id);
-}
+
 extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTransactionsAsString(JNIEnv *env,
