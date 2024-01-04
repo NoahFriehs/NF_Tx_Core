@@ -422,7 +422,7 @@ std::unique_ptr<Wallet> TransactionManager::getWallet(int walletId) {
 }
 
 
-void TransactionManager::saveData(const std::string &filePath) {
+void TransactionManager::saveData(const std::string &dirPath) {
     std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
     FileLog::i("TransactionManager", "Saving data");
     std::vector<WalletStruct> walletStructVector;
@@ -454,11 +454,11 @@ void TransactionManager::saveData(const std::string &filePath) {
         cCardWalletStructVector.push_back(CWalletStruct::convertToCWalletStruct(cardWalletStructVector[i]));
     }
 
-    serializeVector(cWalletStructVector, filePath + "wallets");
-    serializeVector(cCardWalletStructVector, filePath + "cardWallets");
+    serializeVector(cWalletStructVector, dirPath + "wallets");
+    serializeVector(cCardWalletStructVector, dirPath + "cardWallets");
     if (!state.isBig) {
         auto tmState = state.getTransactionManagerState();
-        serializeStruct(tmState, filePath + "state");
+        serializeStruct(tmState, dirPath + "state");
     } else {
         //BigTransactionMangerState bigState = state;
     }
@@ -466,7 +466,7 @@ void TransactionManager::saveData(const std::string &filePath) {
     FileLog::i("TransactionManager", "Finished saving data");
 }
 
-void TransactionManager::loadData(const std::string &filePath) {
+void TransactionManager::loadData(const std::string &dirPath) {
     std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
     FileLog::i("TransactionManager", "Loading data");
     clearAll();
@@ -474,10 +474,10 @@ void TransactionManager::loadData(const std::string &filePath) {
     std::vector<CWalletStruct> cardWalletStructVector;
     TransactionManagerState state;
 
-    deserializeStruct(state, filePath + "state");
+    deserializeStruct(state, dirPath + "state");
 
-    deserializeVector(walletStructVector, filePath + "wallets");
-    deserializeVector(cardWalletStructVector, filePath + "cardWallets");
+    deserializeVector(walletStructVector, dirPath + "wallets");
+    deserializeVector(cardWalletStructVector, dirPath + "cardWallets");
 
     FileLog::i("TransactionManager", "Loading data from file");
 
@@ -680,6 +680,14 @@ std::unique_ptr<Wallet> TransactionManager::getCardWallet(int walletId) {
         }
     FileLog::e("TransactionsManager", "No card wallet found for id: " + std::to_string(walletId));
     return nullptr;
+}
+
+//! Returns the number of active modes (1 = Crypto, 2 = Card, 3 = Crypto + Card)
+int TransactionManager::getActiveModes() {
+    int activeModes = 0;
+    if (hasTxData) activeModes++;
+    if (hasCardTxData) activeModes += 2;
+    return activeModes;
 }
 
 

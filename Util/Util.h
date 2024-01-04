@@ -16,15 +16,19 @@
 // Function to convert a string to TransactionType
 TransactionType ttConverter(const std::string &s);
 
+//! Utility function to split a string by a delimiter
 std::vector<std::string> splitString(const std::string &input, char delimiter);
 
 class TimestampConverter {
 public:
+    //! Convert a string to a tm struct
     static std::tm stringToTm(const std::string &timestamp_str);
 
+    //! Convert a tm struct to a string
     static std::string tmToString(const std::tm &timestamp_tm);
 };
 
+//! Utility function to remove a prefix from a string
 std::string removePrefix(std::string string, const std::string &prefixToRemove);
 
 #endif //NF_TX_CORE_UTIL_H

@@ -5,7 +5,7 @@
 #ifndef NF_TX_CORE_ENUMS_H
 #define NF_TX_CORE_ENUMS_H
 
-
+//! Enum for the transaction type
 enum TransactionType {
     crypto_purchase,
     supercharger_deposit,
@@ -32,6 +32,7 @@ enum TransactionType {
     NONE
 };
 
+//! Enum for the different modes
 enum Mode {
     CDC,
     Card,

@@ -21,8 +21,10 @@ private:
 public:
     AssetValue();
 
+    //! Get the price of a symbol
     double getPrice(const std::string &symbol);
 
+    //! Load the cache with data
     void
     loadCacheWithData(const std::vector<std::string> &symbols, const std::vector<double> &prices);
 };

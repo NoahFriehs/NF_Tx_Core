@@ -21,8 +21,8 @@ Wallet::Wallet(std::string currencyType) : Wallet() {
     this->currencyType = std::move(currencyType);
 }
 
-void Wallet::setIsOutWallet(bool b) {
-    isOutsideWallet = b;
+void Wallet::setIsOutWallet(bool isOut) {
+    isOutsideWallet = isOut;
 }
 
 bool Wallet::addTransaction(BaseTransaction &transaction, bool overrideTTS) {

@@ -59,6 +59,7 @@ struct TransactionData {
         return serializeToXml(*this);
     }
 
+    //! Utility function to serialize a TransactionData struct to XML
     static std::string serializeToXml(const TransactionData &transaction) {
         rapidxml::xml_document<> doc;
 
@@ -101,6 +102,7 @@ struct TransactionData {
         return xmlString;
     }
 
+    //! Utility function to deserialize a TransactionData struct from XML
     void deserializeFromXml(const std::string &xml) {
         size_t pos = 0;
 
@@ -185,10 +187,12 @@ struct WalletData {
         return walletStruct;
     }
 
+    //! Utility function to serialize a WalletData struct to XML
     [[nodiscard]] std::string serializeToXml() const {
         return serializeToXml(*this);
     }
 
+    //! Utility function to serialize a WalletData struct to XML
     static std::string serializeToXml(const WalletData &wallet) {
         rapidxml::xml_document<> doc;
 
@@ -218,6 +222,7 @@ struct WalletData {
         return xmlString;
     }
 
+    //! Utility function to deserialize a WalletData struct from XML
     static void deserializeFromXml(const std::string &xml, WalletData &wallet) {
         size_t pos = 0;
 

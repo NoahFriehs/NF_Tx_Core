@@ -7,15 +7,18 @@
 
 #include <chrono>
 
+//! Utility class to time the duration of a function
 class TimeSpan {
 private:
     std::chrono::time_point<std::chrono::steady_clock> startTime;
 
 public:
+    //! Start the timer
     void start() {
         startTime = std::chrono::steady_clock::now();
     }
 
+    //! End the timer and return the duration in milliseconds
     long double end() {
         auto endTime = std::chrono::steady_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::nanoseconds>(endTime - startTime);

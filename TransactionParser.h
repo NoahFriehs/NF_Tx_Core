@@ -19,8 +19,10 @@ public:
 
     ~TransactionParser();
 
+    //! Parse the data from the csv with the given mode
     void parseFromCsv(Mode mode);
 
+    //! Return the transactions
     std::vector<BaseTransaction> &getTransactions();
 
 private:

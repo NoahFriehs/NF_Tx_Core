@@ -16,10 +16,13 @@ private:
     std::unordered_map<std::string, Cache> cache = {};
 
 public:
+    //! Check the cache for a symbol
     double checkCache(const std::string &symbol);
 
+    //! Check if the cache is valid for a symbol
     bool testCache(const std::string &symbol);
 
+    //! Add a price to the cache
     void addPrice(const std::string &symbol, double price);
     //void reloadCache(AssetValue* assetValue);
 };

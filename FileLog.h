@@ -67,6 +67,7 @@ private:
     }
 
 public:
+    //! Initialize the log
     static void
     init(const std::string &logFilename = "", bool logEnabled = true, int maxLogLevel_ = -1) {
         logIsEnabled = logEnabled;
@@ -79,6 +80,7 @@ public:
         i("FileLog", "Initialized");
     }
 
+    //! Set the max log level
     static void setMaxLogLevel(int maxLogLevel) {
         if (maxLogLevel < 0) {
             std::cerr << "Invalid max log level " << maxLogLevel << std::endl;
@@ -175,6 +177,7 @@ public:
         logFile << timeStamp << " " << logLevelString << " " << tag << ": " << message << std::endl;
     }
 
+    //! Log a message with the given tag in the VERBOSE log level
     static void v(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (2 < maxLogLevel) return;  // VERBOSE
@@ -183,6 +186,7 @@ public:
         writeToFile(2, tag, message);
     }
 
+    //! Log a message with the given tag in the DEBUG log level
     static void d(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (3 < maxLogLevel) return;  // DEBUG
@@ -191,6 +195,7 @@ public:
         writeToFile(3, tag, message);
     }
 
+    //! Log a message with the given tag in the INFO log level
     static void i(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (4 < maxLogLevel) return;  // INFO
@@ -199,6 +204,7 @@ public:
         writeToFile(4, tag, "Info: " + message);
     }
 
+    //! Log a message with the given tag in the WARN log level
     static void w(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (5 < maxLogLevel) return;  // WARN
@@ -207,6 +213,7 @@ public:
         writeToFile(5, tag, "Warning: " + message);
     }
 
+    //! Log a message with the given tag in the ERROR log level
     static void e(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
         if (6 < maxLogLevel) return;  // ERROR

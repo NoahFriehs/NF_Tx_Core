@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <string>
 
+//! Fall back to static prices if the price cache is not available
 class StaticPrices {
 public:
     std::unordered_map<std::string, double> prices;

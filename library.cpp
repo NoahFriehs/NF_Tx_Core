@@ -5,15 +5,17 @@
 #include "TransactionManager.h"
 #include "TimeSpan.h"
 
-#include <iostream>
-#include <utility>
-//#include <jni.h>
+#ifdef ANDROID
+#include <jni.h>
+#endif
 
 
 
 
 
 bool init(const std::string &logFilePath, const std::string &loadDirPath) {
+
+    FileLog::i("library", "Initializing...");
 
     if (DataHolder::GetInstance().isInitialized()) {
         FileLog::i("library", "Already initialized");
@@ -22,7 +24,6 @@ bool init(const std::string &logFilePath, const std::string &loadDirPath) {
 
     FileLog::init(logFilePath, true, 3);
 
-    FileLog::i("library", "Initializing...");
     DataHolder::GetInstance().SetTransactionManager(new TransactionManager());
     if (DataHolder::GetInstance().checkSavedData()) {
         FileLog::i("library", "Saved data found, loading...");
@@ -36,9 +37,10 @@ bool init(const std::string &logFilePath, const std::string &loadDirPath) {
 
 bool initWithData(const std::vector<std::string> &data, uint mode, const std::string &logFilePath) {
 
+    FileLog::i("library", "Initializing with data...");
+
     FileLog::init(logFilePath, true, 3);
 
-    FileLog::i("library", "Initializing with data...");
     FileLog::i("library", "Data size: " + std::to_string(data.size()));
 
     // init DataHolder
@@ -174,8 +176,8 @@ void save(const std::string &filePath) {
     DataHolder::GetInstance().saveData(filePath);
 }
 
-void loadData(const std::string &filePath) {
-    DataHolder::GetInstance().loadData(filePath);
+void loadData(const std::string &dirPath) {
+    DataHolder::GetInstance().loadData(dirPath);
 }
 
 void calculateBalances() {
@@ -226,23 +228,29 @@ void clearAll() {
     DataHolder::GetInstance().GetTransactionManager()->clearAll();
 }
 
+int getActiveModes() {
+    return DataHolder::GetInstance().GetTransactionManager()->getActiveModes();
+}
 
 
-
-
-
-/**
+#ifdef ANDROID
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_init(JNIEnv *env, jobject thiz) {
-    return init();
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_init(JNIEnv *env, jobject thiz, jstring path, jstring loadDirPath) {
+    const char *rawString = env->GetStringUTFChars(path, nullptr);
+    const char *rawString2 = env->GetStringUTFChars(loadDirPath, nullptr);
+    std::string filePath = rawString;
+    std::string loadDir = rawString2;
+    env->ReleaseStringUTFChars(path, rawString);
+    env->ReleaseStringUTFChars(loadDirPath, rawString2);
+    return init(filePath, loadDir);
 }
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_initWithData(JNIEnv *env, jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_initWithData(JNIEnv *env, jobject thiz,
                                                                     jobjectArray data,
-                                                                    jint dataSize, jint mode) {
+                                                                    jint dataSize, jint mode, jstring path) {
     std::vector<std::string> vec;
     jsize len = env->GetArrayLength(data);
     for (int i = 0; i < len; i++) {
@@ -251,11 +259,14 @@ Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_initWithData(JNIEnv *env,
         vec.emplace_back(rawString);
         env->ReleaseStringUTFChars(string, rawString);
     }
-    return initWithData(vec, mode);
+    const char *rawString = env->GetStringUTFChars(path, nullptr);
+    std::string filePath = rawString;
+    env->ReleaseStringUTFChars(path, rawString);
+    return initWithData(vec, mode, filePath);
 }
 extern "C"
 JNIEXPORT jobjectArray JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getCurrencies(JNIEnv *env, jobject thiz) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getCurrencies(JNIEnv *env, jobject thiz) {
     std::vector<std::string> currencies = getCurrencies();
     jobjectArray ret = env->NewObjectArray(currencies.size(), env->FindClass("java/lang/String"),
                                            nullptr);
@@ -266,7 +277,7 @@ Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getCurrencies(JNIEnv *env
 }
 extern "C"
 JNIEXPORT void JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_setPrice(JNIEnv *env, jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setPrice(JNIEnv *env, jobject thiz,
                                                                 jobjectArray prices) {
     std::vector<double> vec;
     jsize len = env->GetArrayLength(prices);
@@ -285,30 +296,31 @@ Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_setPrice(JNIEnv *env, job
 
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getTotalMoneySpent(JNIEnv *env,
-    jobject thiz) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalMoneySpent(JNIEnv *env,
+                                                                          jobject thiz) {
     return getTotalMoneySpent();
 }
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getValueOfAssets(JNIEnv *env, jobject thiz) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getValueOfAssets(JNIEnv *env, jobject thiz) {
     return getTotalValueOfAssets();
 }
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getTotalBonus(JNIEnv *env, jobject thiz) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalBonus(JNIEnv *env, jobject thiz) {
     return getTotalBonus();
 }
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_00024Companion_getValueOfAssets(JNIEnv *env,
-    jobject thiz, jint wallet_id) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_getValueOfAssets(JNIEnv *env,
+                                                                                       jobject thiz,
+                                                                                       jint wallet_id) {
     return getValueOfAssets(wallet_id);
 }
 extern "C"
 JNIEXPORT jobjectArray JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getTransactionsAsString(JNIEnv *env,
-    jobject thiz) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTransactionsAsString(JNIEnv *env,
+                                                                               jobject thiz) {
     std::vector<std::string> vec = getTransactionsAsStrings();
     jobjectArray ret = env->NewObjectArray(vec.size(), env->FindClass("java/lang/String"), nullptr);
     for (int i = 0; i < vec.size(); i++) {
@@ -318,8 +330,8 @@ Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getTransactionsAsString(J
 }
 extern "C"
 JNIEXPORT jobjectArray JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getWalletsAsString(JNIEnv *env,
-    jobject thiz) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getWalletsAsString(JNIEnv *env,
+                                                                          jobject thiz) {
     std::vector<std::string> vec = getWalletsAsStrings();
     jobjectArray ret = env->NewObjectArray(vec.size(), env->FindClass("java/lang/String"), nullptr);
     for (int i = 0; i < vec.size(); i++) {
@@ -331,20 +343,37 @@ Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getWalletsAsString(JNIEnv
 
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getValueOfAssetsByWID(JNIEnv *env,
-    jobject thiz, jint wallet_id) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getValueOfAssetsByWID(JNIEnv *env,
+                                                                             jobject thiz,
+                                                                             jint wallet_id) {
     return getValueOfAssets(wallet_id);
 }
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getTotalBonusByWID(JNIEnv *env, jobject thiz,
-    jint wallet_id) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalBonusByWID(JNIEnv *env, jobject thiz,
+                                                                          jint wallet_id) {
     return getBonus(wallet_id);
 }
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_Core_CoreService_getMoneySpentByWID(JNIEnv *env, jobject thiz,
-    jint wallet_id) {
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getMoneySpentByWID(JNIEnv *env, jobject thiz,
+                                                                          jint wallet_id) {
     return getMoneySpent(wallet_id);
 }
- **/
+extern "C"
+JNIEXPORT void JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_save(JNIEnv *env, jobject thiz, jstring path) {
+    const char *rawString = env->GetStringUTFChars(path, nullptr);
+    std::string filePath = rawString;
+    save(filePath);
+    env->ReleaseStringUTFChars(path, rawString);
+}
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_load(JNIEnv *env, jobject thiz, jstring path) {
+    std::string filePath = env->GetStringUTFChars(path, nullptr);
+    loadData(filePath);
+    env->ReleaseStringUTFChars(path, filePath.c_str());
+}
+#endif

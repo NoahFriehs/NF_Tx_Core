@@ -25,6 +25,7 @@ public:
     DataHolder &operator=(DataHolder const &) = delete;
 
 
+    //! Set the TransactionManager
     void SetTransactionManager(TransactionManager *tm) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!tm) throw std::invalid_argument("Null pointer to TransactionManager");
@@ -32,6 +33,7 @@ public:
         initialized_ = transactionManager->isReady();
     }
 
+    //! Get the TransactionManager
     TransactionManager *GetTransactionManager() {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
@@ -40,23 +42,27 @@ public:
     }
 
 
+    //! Check if the TransactionManager is initialized
     bool isInitialized() {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         return initialized_;
     }
 
-    void saveData(const std::string &filePath) {
+    //! Save the data to a directory
+    void saveData(const std::string &dirPath) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
-        transactionManager->saveData(filePath);
+        transactionManager->saveData(dirPath);
     }
 
-    void loadData(const std::string &filePath) {
+    //! Load the data from a directory
+    void loadData(const std::string &dirPath) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
-        return transactionManager->loadData(filePath);
+        return transactionManager->loadData(dirPath);
     }
 
+    //! Check if the data is saved
     bool checkSavedData() {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
