@@ -58,8 +58,8 @@ bool initWithData(const std::vector<std::string> &data, uint mode, const std::st
         return false;
     }
 
-    long double time = timeSpan.end();
-    FileLog::i("library", "Parsing took " + std::to_string(time) + " milliseconds");
+    long double end = timeSpan.end();
+    FileLog::i("library", "Parsing took " + std::to_string(end) + " milliseconds");
 
     auto *transactionManager = new TransactionManager();
 
@@ -69,8 +69,8 @@ bool initWithData(const std::vector<std::string> &data, uint mode, const std::st
 
     transactionManager->processTransactions();
 
-    time = timeSpan.end();
-    FileLog::i("library", "Processing took " + std::to_string(time) + " milliseconds");
+    end = timeSpan.end();
+    FileLog::i("library", "Processing took " + std::to_string(end) + " milliseconds");
 
     dataHolder.SetTransactionManager(transactionManager);
 

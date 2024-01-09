@@ -50,6 +50,9 @@ struct WalletsBalance {
 
     void fillFromWalletBalanceMap(const std::map<std::string, WalletBalance> &walletBalanceMap) {
         for (const auto &pair: walletBalanceMap) {
+            if (pair.first == "EUR") {
+                continue;
+            }
             const auto &walletBalance = pair.second;
             nativeBalance += walletBalance.nativeBalance;
             moneySpent += walletBalance.moneySpent;

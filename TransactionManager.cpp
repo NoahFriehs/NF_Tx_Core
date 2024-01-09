@@ -220,7 +220,7 @@ void TransactionManager::calculateWalletBalances() {
     if (hasTxData)
         for (auto &wallet: wallets) {
 
-            if (wallet.second.getCurrencyType() == "EUR") continue;
+            //if (wallet.second.getCurrencyType() == "EUR") continue;
 
             auto *walletBalance = new WalletBalance();
             walletBalance->fillFromWallet(&wallet.second);
