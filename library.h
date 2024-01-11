@@ -16,7 +16,7 @@ extern "C" {
 bool init(const std::string &logFilePath, const std::string &loadDirPath);
 
 //! \brief Initializes the library with the given data, mode, log file path and load directory path.
-bool initWithData(const std::vector<std::string> &data, uint mode, const std::string &logFilePath);
+bool initWithData(const std::vector<std::string> &data, int mode, const std::string &logFilePath);
 
 //! \brief Initializes the library with the given data, mode, log file path and load directory path.
 void save(const std::string &filePath);
