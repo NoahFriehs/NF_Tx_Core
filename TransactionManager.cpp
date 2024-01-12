@@ -212,6 +212,13 @@ void TransactionManager::removeUnusedTransactions() {
 
 void TransactionManager::calculateWalletBalances() {
 
+    //for each wallet add the currency Type to the vector if it is not already in there
+    for (auto &wallet: wallets) {
+        if (std::find(currencies.begin(), currencies.end(), wallet.second.getCurrencyType()) ==
+            currencies.end())
+            currencies.push_back(wallet.second.getCurrencyType());
+    }
+
     walletBalanceMap.clear();
     cardWalletBalanceMap.clear();
     walletsBalance.reset();

@@ -370,4 +370,12 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_load(JNIEnv *env, jobject
     loadData(filePath);
     env->ReleaseStringUTFChars(path, filePath.c_str());
 }
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_calculateWalletBalances(JNIEnv *env,
+                                                                               jobject thiz) {
+    calculateBalances();
+}
+
 #endif
