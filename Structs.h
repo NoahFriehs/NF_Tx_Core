@@ -34,7 +34,7 @@ struct TransactionData {
     bool isOutsideTransaction = false;
     std::string notes = {};
 
-    TransactionStruct getTransactionStruct() const {
+    [[nodiscard]] TransactionStruct getTransactionStruct() const {
         TransactionStruct transactionStruct;
         transactionStruct.transactionId = transactionId;
         transactionStruct.walletId = walletId;
@@ -102,23 +102,35 @@ struct TransactionData {
         return xmlString;
     }
 
+    //! Utility function to remove the XML header from a string
+    static void removeXmlHeader(std::string &xmlContent) {
+        size_t headerStart = xmlContent.find("<?xml version='");
+        if (headerStart != std::string::npos) {
+            size_t headerEnd = xmlContent.find("?>", headerStart);
+            xmlContent.erase(headerStart, headerEnd - headerStart + 2); // +2 to remove '?>'
+        }
+    }
+
     //! Utility function to deserialize a TransactionData struct from XML
     void deserializeFromXml(const std::string &xml) {
         size_t pos = 0;
 
+        std::string xmlContent = xml;
+        removeXmlHeader(xmlContent);
+
         auto getTagValue = [&](const std::string &tag) -> std::string {
-            size_t startTag = xml.find("<" + tag + ">", pos);
+            size_t startTag = xmlContent.find("<" + tag + ">", pos);
             if (startTag == std::string::npos) {
                 return "";
             }
 
-            size_t endTag = xml.find("</" + tag + ">", startTag);
+            size_t endTag = xmlContent.find("</" + tag + ">", startTag);
             if (endTag == std::string::npos) {
                 return "";
             }
 
-            pos = endTag + 1;
-            return xml.substr(startTag + tag.length() + 2, endTag - startTag - tag.length() - 2);
+            //pos = endTag + 1;
+            return xmlContent.substr(startTag + tag.length() + 2, endTag - startTag - tag.length() - 2);
         };
 
         transactionId = std::stoi(getTagValue("transactionId"));
@@ -161,7 +173,7 @@ struct WalletData {
     bool isOutsideWallet{};
     std::string notes = {};
 
-    WalletStruct getWalletStruct() const {
+    [[nodiscard]] WalletStruct getWalletStruct() const {
         WalletStruct walletStruct;
         walletStruct.walletId = walletId;
         walletStruct.currencyType = currencyType;
@@ -174,7 +186,7 @@ struct WalletData {
         return walletStruct;
     }
 
-    CWalletStruct getCWalletStruct() const {
+    [[nodiscard]] CWalletStruct getCWalletStruct() const {
         CWalletStruct walletStruct;
         walletStruct.walletId = walletId;
         stringToCharArray(walletStruct.currencyType, currencyType);

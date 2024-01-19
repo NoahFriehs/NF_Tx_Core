@@ -51,7 +51,8 @@ void TransactionManager::getCurrenciesFromTxs() {
     if (!cardTransactions.empty()) {
         hasCardTxData = true;
         for (auto &item: cardTransactions) {
-            if (std::find(cardTxTypes.begin(), cardTxTypes.end(), item.getTransactionTypeString()) ==
+            if (std::find(cardTxTypes.begin(), cardTxTypes.end(),
+                          item.getTransactionTypeString()) ==
                 cardTxTypes.end())
                 cardTxTypes.push_back(item.getTransactionTypeString());
         }
@@ -212,6 +213,13 @@ void TransactionManager::removeUnusedTransactions() {
 
 void TransactionManager::calculateWalletBalances() {
 
+    //for each wallet add the currency Type to the vector if it is not already in there
+    for (auto &wallet: wallets) {
+        if (std::find(currencies.begin(), currencies.end(), wallet.second.getCurrencyType()) ==
+            currencies.end())
+            currencies.push_back(wallet.second.getCurrencyType());
+    }
+
     walletBalanceMap.clear();
     cardWalletBalanceMap.clear();
     walletsBalance.reset();
@@ -224,11 +232,12 @@ void TransactionManager::calculateWalletBalances() {
 
             auto *walletBalance = new WalletBalance();
             walletBalance->fillFromWallet(&wallet.second);
-            if (walletBalance->nativeBalance == 0 && walletBalance->balance != 0) {
+            if (walletBalance->nativeBalance == 0 && walletBalance->balance != 0 || true) {
                 walletBalance->nativeBalance =
                         assetValue.getPrice(walletBalance->currencyType) * walletBalance->balance;
                 walletBalance->nativeBonusBalance =
-                        assetValue.getPrice(walletBalance->currencyType) * walletBalance->bonusBalance;
+                        assetValue.getPrice(walletBalance->currencyType) *
+                        walletBalance->bonusBalance;
             }
             walletBalanceMap.insert(
                     std::pair<std::string, WalletBalance>(wallet.first, *walletBalance));
@@ -243,7 +252,8 @@ void TransactionManager::calculateWalletBalances() {
                 walletBalance->nativeBalance =
                         assetValue.getPrice(walletBalance->currencyType) * walletBalance->balance;
                 walletBalance->nativeBonusBalance =
-                        assetValue.getPrice(walletBalance->currencyType) * walletBalance->bonusBalance;
+                        assetValue.getPrice(walletBalance->currencyType) *
+                        walletBalance->bonusBalance;
             }
             cardWalletBalanceMap.insert(
                     std::pair<std::string, WalletBalance>(txType, *walletBalance));
@@ -285,7 +295,8 @@ double TransactionManager::getValueOfAssets(int walletId) {
         if (item.second.walletId == walletId)
             return item.second.nativeBalance;
     }
-    FileLog::w("TransactionsManager", "No wallet found for id: " + std::to_string(walletId));
+    FileLog::w("TransactionsManager:getValueOfAssets",
+               "No wallet found for id: " + std::to_string(walletId));
     return 0.0;
 }
 
@@ -302,7 +313,8 @@ double TransactionManager::getTotalBonus(int walletId) {
         if (item.second.walletId == walletId)
             return item.second.nativeBonusBalance;
     }
-    FileLog::w("TransactionsManager", "No wallet found for id: " + std::to_string(walletId));
+    FileLog::w("TransactionsManager:getTotalBonus",
+               "No wallet found for id: " + std::to_string(walletId));
     return 0.0;
 }
 
@@ -315,7 +327,8 @@ double TransactionManager::getMoneySpent(int walletId) {
         if (item.second.walletId == walletId)
             return item.second.moneySpent;
     }
-    FileLog::w("TransactionsManager", "No wallet found for id: " + std::to_string(walletId));
+    FileLog::w("TransactionsManager:getMoneySpent",
+               "No wallet found for id: " + std::to_string(walletId));
     return 0.0;
 }
 
@@ -325,17 +338,17 @@ void TransactionManager::setTransactions(std::vector<BaseTransaction> &transacti
 
     switch (mode) {
         case CDC:
-            this->transactions = transactions_;
+            transactions = transactions_;
             hasTxData = true;
             break;
         case Card:
-            this->cardTransactions = transactions_;
+            cardTransactions = transactions_;
             hasCardTxData = true;
             break;
         case Custom:
             throw std::invalid_argument("Custom mode not implemented");
         case Default:
-            this->transactions = transactions_;
+            transactions = transactions_;
             hasTxData = true;
             break;
     }
@@ -417,7 +430,8 @@ std::unique_ptr<Wallet> TransactionManager::getWallet(int walletId) {
             if (wallet.getWalletId() == walletId)
                 return std::make_unique<Wallet>(wallet);
         }
-    FileLog::e("TransactionsManager", "No wallet found for id: " + std::to_string(walletId));
+    FileLog::e("TransactionsManager:getWallet",
+               "No wallet found for id: " + std::to_string(walletId));
     return nullptr;
 }
 
@@ -442,7 +456,7 @@ void TransactionManager::saveData(const std::string &dirPath) {
 
     auto state = getTransactionManagerState();
 
-    FileLog::i("TransactionManager", "Saving data to file");
+    FileLog::i("TransactionManager", "Saving data to dir: " + dirPath);
 
     size_t walletsSize = walletStructVector.size();
     size_t cardWalletsSize = cardWalletStructVector.size();
@@ -451,7 +465,8 @@ void TransactionManager::saveData(const std::string &dirPath) {
         cWalletStructVector.push_back(CWalletStruct::convertToCWalletStruct(walletStructVector[i]));
     }
     for (size_t i = 0; i < cardWalletsSize; i++) {
-        cCardWalletStructVector.push_back(CWalletStruct::convertToCWalletStruct(cardWalletStructVector[i]));
+        cCardWalletStructVector.push_back(
+                CWalletStruct::convertToCWalletStruct(cardWalletStructVector[i]));
     }
 
     serializeVector(cWalletStructVector, dirPath + "wallets");
@@ -489,7 +504,9 @@ void TransactionManager::loadData(const std::string &dirPath) {
             wallet.setWalletData(CWalletStruct::convertToWalletStruct(walletStruct));
             if (!wallet.getIsOutWallet())
                 wallets.insert(std::pair<std::string, Wallet>(walletStruct.currencyType, wallet));
-            else outWallets.insert(std::pair<std::string, Wallet>(walletStruct.currencyType, wallet));
+            else
+                outWallets.insert(
+                        std::pair<std::string, Wallet>(walletStruct.currencyType, wallet));
 
             auto txs = wallet.getTransactions();
             transactions.insert(transactions.end(), txs.begin(), txs.end());
@@ -514,11 +531,13 @@ TMState TransactionManager::getTransactionManagerState() {
 
     if (!currencies.empty()) {
         if (currencies.size() > BIG_MAX_WALLETS) {
-            FileLog::e("TransactionManager", "Too many currencies: " + std::to_string(currencies.size()));
+            FileLog::e("TransactionManager",
+                       "Too many currencies: " + std::to_string(currencies.size()));
             currencies.erase(currencies.begin() + BIG_MAX_WALLETS, currencies.end());
         }
         if (currencies.size() > maxWallets) {
-            FileLog::w("TransactionManager", "Too many currencies: " + std::to_string(currencies.size()));
+            FileLog::w("TransactionManager",
+                       "Too many currencies: " + std::to_string(currencies.size()));
             state = new BigTMState();
             isBig = true;
             maxWallets = BIG_MAX_WALLETS;
@@ -545,11 +564,13 @@ TMState TransactionManager::getTransactionManagerState() {
     }
     if (!cardTxTypes.empty()) {
         if (currencies.size() > BIG_MAX_WALLETS) {
-            FileLog::e("TransactionManager", "Too many currencies: " + std::to_string(currencies.size()));
+            FileLog::e("TransactionManager",
+                       "Too many currencies: " + std::to_string(currencies.size()));
             currencies.erase(currencies.begin() + BIG_MAX_WALLETS, currencies.end());
         }
         if (currencies.size() > maxWallets || isBig) {
-            FileLog::w("TransactionManager", "Too many currencies: " + std::to_string(currencies.size()));
+            FileLog::w("TransactionManager",
+                       "Too many currencies: " + std::to_string(currencies.size()));
             if (!isBig) state = new BigTMState();
             maxWallets = BIG_MAX_WALLETS;
         }
@@ -587,7 +608,8 @@ bool TransactionManager::checkSavedData() {
     std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
     FileLog::i("TransactionManager", "Checking saved data");
 
-    return checkIfFileExists("wallets") && checkIfFileExists("cardWallets") && checkIfFileExists("state");
+    return checkIfFileExists("wallets") && checkIfFileExists("cardWallets") &&
+           checkIfFileExists("state");
 }
 
 bool TransactionManager::checkIfFileExists(const std::string &file) {
@@ -623,7 +645,7 @@ void TransactionManager::setWalletData(const std::vector<WalletData> &_wallets) 
         Wallet wallet;
         wallet.setWalletData(walletData.getWalletStruct());
         if (!wallet.getIsOutWallet())
-            this->wallets.insert(std::pair<std::string, Wallet>(walletData.currencyType, wallet));
+            wallets.insert(std::pair<std::string, Wallet>(walletData.currencyType, wallet));
         else outWallets.insert(std::pair<std::string, Wallet>(walletData.currencyType, wallet));
 
         auto txs = wallet.getTransactions();
@@ -637,7 +659,7 @@ void TransactionManager::setCardWalletData(const std::vector<WalletData> &_cardW
     for (auto &walletData: _cardWallets) {
         Wallet wallet;
         wallet.setWalletData(walletData.getWalletStruct());
-        this->cardWallets.insert(std::pair<std::string, Wallet>(walletData.currencyType, wallet));
+        cardWallets.insert(std::pair<std::string, Wallet>(walletData.currencyType, wallet));
         auto txs = wallet.getTransactions();
         cardTransactions.insert(cardTransactions.end(), txs.begin(), txs.end());
     }
