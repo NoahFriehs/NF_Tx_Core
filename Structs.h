@@ -129,7 +129,7 @@ struct TransactionData {
                 return "";
             }
 
-            //pos = endTag + 1;
+            //pos = endTag + 1; //no double tags but unordered
             return xmlContent.substr(startTag + tag.length() + 2, endTag - startTag - tag.length() - 2);
         };
 

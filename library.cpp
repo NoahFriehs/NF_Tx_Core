@@ -37,7 +37,7 @@ bool init(const std::string &logFilePath, const std::string &loadDirPath) {
     return false;
 }
 
-bool initWithData(const std::vector<std::string> &data, uint mode, const std::string &logFilePath) {
+bool initWithData(const std::vector<std::string> &data, int mode, const std::string &logFilePath) {
 
     FileLog::init(logFilePath, true, 3);
 
