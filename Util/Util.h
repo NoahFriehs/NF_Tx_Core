@@ -31,4 +31,9 @@ public:
 //! Utility function to remove a prefix from a string
 std::string removePrefix(std::string string, const std::string &prefixToRemove);
 
+std::string removeAllOccurrences(std::string str, char charToRemove);
+
+//! Utility function to return thr Kraken currencyType
+std::string getKrakenCurrencyType(const std::string &currencyType);
+
 #endif //NF_TX_CORE_UTIL_H

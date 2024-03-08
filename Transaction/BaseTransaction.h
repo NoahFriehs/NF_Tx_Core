@@ -25,6 +25,8 @@ public:
     //! Parse the card transaction string
     void parseCard(const std::string &txString);
 
+    void parseKraken(const std::string &txString);
+
     //! Return the transaction id
     int getTransactionId() const;
 
@@ -97,6 +99,7 @@ private:
     long double toAmount{};
     long double nativeAmount{};   // Amount in native currency: USD, EUR, etc.
     long double amountBonus{};
+    long double feeAmount{};
     TransactionType transactionType = NONE;
     std::string transactionTypeString = {};
 

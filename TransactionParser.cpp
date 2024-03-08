@@ -30,6 +30,9 @@ void TransactionParser::parseFromCsv(Mode mode) {
         case Card:
             parseCard();
             break;
+        case Kraken:
+            parseKraken();
+            break;
         case Custom:
             throw std::invalid_argument("Custom mode not implemented");
         case Default:
@@ -80,4 +83,23 @@ void TransactionParser::parseCard() {
     data.clear();
     hasData = false;
 
+}
+
+void TransactionParser::parseKraken() {
+
+    if (R"("txid","ordertxid","pair","time","type","ordertype","price","cost","fee","vol","margin","misc","ledgers")" ==
+        data[0])
+        data.erase(data.begin());   // remove header row, if needed
+
+    for (const auto &item: data) {
+        BaseTransaction transaction;
+        transaction.parseKraken(item);
+        transactions.push_back(transaction);
+    }
+
+    FileLog::i("TransactionParser",
+               "Parsed " + std::to_string(transactions.size()) + " transactions");
+
+    data.clear();
+    hasData = false;
 }

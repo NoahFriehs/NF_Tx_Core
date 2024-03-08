@@ -194,3 +194,28 @@ void BaseTransaction::setTransactionData(const TransactionStruct &txStruct) {
 void BaseTransaction::setTransactionTypeString(const std::string &transactionTypeStringToSet) {
     //BaseTransaction::transactionTypeString = transactionTypeStringToSet;
 }
+
+void BaseTransaction::parseKraken(const std::string &txString) {
+    //"txid","ordertxid","pair","time","type","ordertype","price","cost","fee","vol","margin","misc","ledgers"
+    //"T67CDX-SB6EI-XIRITS","O3VT22-PENXL-5BRYNG","XXBTZEUR","2023-06-19 13:34:05.4856","buy","limit",24300.00000,49.99992,0.13000,0.00205761,0.00000,"initiated","LUBMNQ-ZAVX6-IGKZMJ,LWLY4J-OZSCV-P4RHND"
+    auto cleanTxString = removeAllOccurrences(txString, '\"');
+    auto tx = splitString(cleanTxString, ',');
+
+    transactionId = txIdCounter++;
+    transactionDate = TimestampConverter::stringToTm(tx[3]);
+    description = tx[2] + "   " + tx[11];
+    transactionTypeString = tx[4];
+    if (tx[4] == "buy") {
+        currencyType = getKrakenCurrencyType(tx[2].substr(0, 4));   //only if type == buy
+        amount = std::stold(tx[9]);
+        nativeAmount = std::stold(tx[7]);
+        transactionType = crypto_purchase;
+    } else {
+        currencyType = getKrakenCurrencyType(tx[2].substr(4, 7));   //only if type == sell and untested
+        amount = -std::stold(tx[9]);
+        nativeAmount = -std::stold(tx[7]);
+        transactionType = STRING;
+    }
+    feeAmount = std::stold(tx[8]);
+
+}

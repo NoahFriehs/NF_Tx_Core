@@ -37,7 +37,8 @@ enum Mode {
     CDC,
     Card,
     Default,
-    Custom
+    Custom,
+    Kraken
 };
 
 

@@ -75,3 +75,16 @@ std::string removePrefix(std::string string, const std::string &prefixToRemove) 
         string.erase(0, prefixToRemove.length());
     return string;
 }
+
+std::string getKrakenCurrencyType(const std::string &currencyType) {
+    if (currencyType == "XXBT") return "BTC";
+    if (currencyType == "XETH") return "ETH";
+    if (currencyType == "XXRP") return "XRP";
+
+    return currencyType;
+}
+
+std::string removeAllOccurrences(std::string str, char charToRemove) {
+    str.erase(std::remove(str.begin(), str.end(), charToRemove), str.end());
+    return str;
+}

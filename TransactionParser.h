@@ -33,6 +33,8 @@ private:
     void parseCDC();
 
     void parseCard();
+
+    void parseKraken();
 };
 
 

@@ -338,6 +338,7 @@ void TransactionManager::setTransactions(std::vector<BaseTransaction> &transacti
 
     switch (mode) {
         case CDC:
+        case Kraken:
             transactions = transactions_;
             hasTxData = true;
             break;
