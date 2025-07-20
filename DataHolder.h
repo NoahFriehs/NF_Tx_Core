@@ -9,6 +9,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <utility>
+#include <memory>
 #include "TransactionManager.h"
 
 class DataHolder {
@@ -24,11 +25,23 @@ public:
 
     DataHolder &operator=(DataHolder const &) = delete;
 
+    // Destructor to properly clean up resources
+    ~DataHolder() {
+        std::lock_guard<std::mutex> lock(mutexData);
+        delete transactionManager;
+        transactionManager = nullptr;
+    }
 
     //! Set the TransactionManager
     void SetTransactionManager(TransactionManager *tm) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!tm) throw std::invalid_argument("Null pointer to TransactionManager");
+
+        // Clean up previous instance if exists
+        if (transactionManager) {
+            delete transactionManager;
+        }
+
         transactionManager = tm;
         initialized_ = transactionManager->isReady();
     }

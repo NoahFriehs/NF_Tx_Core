@@ -13,7 +13,7 @@
 TransactionManager::TransactionManager() = default;
 
 TransactionManager::TransactionManager(std::vector<BaseTransaction> &transactions) {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     if (transactions.empty()) throw std::invalid_argument("Transactions is empty");
 
     this->transactions = transactions;
@@ -23,7 +23,7 @@ TransactionManager::~TransactionManager() = default;
 
 
 void TransactionManager::processTransactions() {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     getCurrenciesFromTxs();
     FileLog::i("TransactionManager", "Found " + std::to_string(currencies.size()) + " currencies");
 
@@ -230,7 +230,7 @@ void TransactionManager::calculateWalletBalances() {
 
             //if (wallet.second.getCurrencyType() == "EUR") continue;
 
-            auto *walletBalance = new WalletBalance();
+            auto walletBalance = std::make_unique<WalletBalance>();
             walletBalance->fillFromWallet(&wallet.second);
             if (walletBalance->nativeBalance == 0 && walletBalance->balance != 0 || true) {
                 walletBalance->nativeBalance =
@@ -246,7 +246,7 @@ void TransactionManager::calculateWalletBalances() {
 
     if (hasCardTxData)
         for (auto [txType, wallet]: cardWallets) {
-            auto *walletBalance = new WalletBalance();
+            auto walletBalance = std::make_unique<WalletBalance>();
             walletBalance->fillFromWallet(&wallet);
             if (walletBalance->nativeBalance == 0 && walletBalance->balance != 0) {
                 walletBalance->nativeBalance =
@@ -333,7 +333,7 @@ double TransactionManager::getMoneySpent(int walletId) {
 }
 
 void TransactionManager::setTransactions(std::vector<BaseTransaction> &transactions_, Mode mode) {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     if (transactions_.empty()) throw std::invalid_argument("Transactions is empty");
 
     switch (mode) {
@@ -438,7 +438,7 @@ std::unique_ptr<Wallet> TransactionManager::getWallet(int walletId) {
 
 
 void TransactionManager::saveData(const std::string &dirPath) {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Saving data");
     std::vector<WalletStruct> walletStructVector;
     std::vector<WalletStruct> cardWalletStructVector;
@@ -483,7 +483,7 @@ void TransactionManager::saveData(const std::string &dirPath) {
 }
 
 void TransactionManager::loadData(const std::string &dirPath) {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Loading data");
     clearAll();
     std::vector<CWalletStruct> walletStructVector;
@@ -526,7 +526,7 @@ void TransactionManager::loadData(const std::string &dirPath) {
 }
 
 TMState TransactionManager::getTransactionManagerState() {
-    auto *state = new TMState();
+    auto state = std::make_unique<TMState>();
     bool isBig = false;
     int maxWallets = MAX_WALLETS;
 
@@ -539,7 +539,7 @@ TMState TransactionManager::getTransactionManagerState() {
         if (currencies.size() > maxWallets) {
             FileLog::w("TransactionManager",
                        "Too many currencies: " + std::to_string(currencies.size()));
-            state = new BigTMState();
+            state = std::make_unique<BigTMState>();
             isBig = true;
             maxWallets = BIG_MAX_WALLETS;
         }
@@ -559,7 +559,7 @@ TMState TransactionManager::getTransactionManagerState() {
         }
         if (isBig) {
             for (int i = 0; i < BIG_MAX_WALLETS; ++i) {
-                std::strcpy(((BigTMState *) state)->bigCurrencies[i], currenciesChar[i]);
+                std::strcpy(((BigTMState *) state.get())->bigCurrencies[i], currenciesChar[i]);
             }
         }
     }
@@ -572,7 +572,7 @@ TMState TransactionManager::getTransactionManagerState() {
         if (currencies.size() > maxWallets || isBig) {
             FileLog::w("TransactionManager",
                        "Too many currencies: " + std::to_string(currencies.size()));
-            if (!isBig) state = new BigTMState();
+            if (!isBig) state = std::make_unique<BigTMState>();
             maxWallets = BIG_MAX_WALLETS;
         }
         char cardTxTypesChar[maxWallets][MAX_STRING_LENGTH];
@@ -606,7 +606,7 @@ void TransactionManager::setTransactionManagerState(const TransactionManagerStat
 }
 
 bool TransactionManager::checkSavedData() {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Checking saved data");
 
     return checkIfFileExists("wallets") && checkIfFileExists("cardWallets") &&
@@ -640,7 +640,7 @@ void TransactionManager::clearAll() {
 }
 
 void TransactionManager::setWalletData(const std::vector<WalletData> &_wallets) {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Setting wallet data");
     for (auto &walletData: _wallets) {
         Wallet wallet;
@@ -655,7 +655,7 @@ void TransactionManager::setWalletData(const std::vector<WalletData> &_wallets) 
 }
 
 void TransactionManager::setCardWalletData(const std::vector<WalletData> &_cardWallets) {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Setting card wallet data");
     for (auto &walletData: _cardWallets) {
         Wallet wallet;
@@ -667,7 +667,7 @@ void TransactionManager::setCardWalletData(const std::vector<WalletData> &_cardW
 }
 
 void TransactionManager::setTransactionData(const std::vector<TransactionData> &txData) {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Setting transaction data");
     for (auto &tx: txData) {
         BaseTransaction transaction;
@@ -677,7 +677,7 @@ void TransactionManager::setTransactionData(const std::vector<TransactionData> &
 }
 
 void TransactionManager::setCardTransactionData(const std::vector<TransactionData> &txData) {
-    std::lock_guard<std::mutex> lock(mutex, std::adopt_lock);
+    std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Setting card transaction data");
     for (auto &tx: txData) {
         BaseTransaction transaction;
@@ -712,6 +712,3 @@ int TransactionManager::getActiveModes() const {
     if (hasCardTxData) activeModes += 2;
     return activeModes;
 }
-
-
-

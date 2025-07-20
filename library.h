@@ -27,7 +27,7 @@ void loadData(const std::string &dirPath);
 //! \brief Returns the active modes. (1 = Crypto, 2 = Card, 3 = Crypto + Card)
 int getActiveModes();
 
-void calculate();
+//void calculate();
 
 //! \brief Resets the library.
 void clearAll();
