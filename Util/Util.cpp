@@ -49,6 +49,49 @@ std::vector<std::string> splitString(const std::string &input, char delimiter) {
     return result;
 }
 
+std::vector<std::string> splitCsvLine(const std::string &input, char delimiter) {
+    std::vector<std::string> result;
+    std::string current;
+    bool inQuotes = false;
+
+    for (size_t i = 0; i < input.size(); i++) {
+        char c = input[i];
+        if (inQuotes) {
+            if (c == '"') {
+                if (i + 1 < input.size() && input[i + 1] == '"') {
+                    current += '"';
+                    i++;
+                } else {
+                    inQuotes = false;
+                }
+            } else {
+                current += c;
+            }
+        } else {
+            // A quote only opens a quoted field at the start of a field,
+            // so unquoted quotes stay literal (identical to splitString).
+            if (c == '"' && current.empty()) {
+                inQuotes = true;
+            } else if (c == delimiter) {
+                result.push_back(current);
+                current.clear();
+            } else {
+                current += c;
+            }
+        }
+    }
+    result.push_back(current);
+
+    // Match splitString for lines without quotes: a trailing delimiter does
+    // not produce an extra empty token.
+    if (!result.empty() && result.back().empty() && !input.empty() &&
+        input.back() == delimiter) {
+        result.pop_back();
+    }
+
+    return result;
+}
+
 
 std::tm TimestampConverter::stringToTm(const std::string &timestamp_str) {
     std::tm timestamp_tm = {};

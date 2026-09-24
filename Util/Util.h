@@ -19,6 +19,12 @@ TransactionType ttConverter(const std::string &s);
 //! Utility function to split a string by a delimiter
 std::vector<std::string> splitString(const std::string &input, char delimiter);
 
+//! Split a CSV line with RFC-4180 quote handling: a quoted field keeps
+//! embedded delimiters, doubled quotes inside a quoted field are an
+//! escaped quote, and quotes not at the start of a field are literals.
+//! For lines without quotes the result is identical to splitString.
+std::vector<std::string> splitCsvLine(const std::string &input, char delimiter);
+
 class TimestampConverter {
 public:
     //! Convert a string to a tm struct

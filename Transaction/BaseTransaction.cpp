@@ -12,7 +12,7 @@ BaseTransaction::BaseTransaction() = default;
 BaseTransaction::~BaseTransaction() = default;
 
 void BaseTransaction::parseCDC(const std::string &txString) {
-    auto tx = splitString(txString, ',');
+    auto tx = splitCsvLine(txString, ',');
 
     transactionId = txIdCounter++;
     transactionDate = TimestampConverter::stringToTm(tx[0]);
@@ -102,7 +102,7 @@ TransactionData BaseTransaction::getTransactionData() const {
 }
 
 void BaseTransaction::parseCard(const std::string &txString) {
-    auto tx = splitString(txString, ',');
+    auto tx = splitCsvLine(txString, ',');
 
     transactionId = txIdCounter++;
     transactionDate = TimestampConverter::stringToTm(tx[0]);
@@ -203,8 +203,9 @@ void BaseTransaction::setTransactionTypeString(const std::string &transactionTyp
 void BaseTransaction::parseKraken(const std::string &txString) {
     //"txid","ordertxid","pair","time","type","ordertype","price","cost","fee","vol","margin","misc","ledgers"
     //"T67CDX-SB6EI-XIRITS","O3VT22-PENXL-5BRYNG","XXBTZEUR","2023-06-19 13:34:05.4856","buy","limit",24300.00000,49.99992,0.13000,0.00205761,0.00000,"initiated","LUBMNQ-ZAVX6-IGKZMJ,LWLY4J-OZSCV-P4RHND"
-    auto cleanTxString = removeAllOccurrences(txString, '\"');
-    auto tx = splitString(cleanTxString, ',');
+    // Quote-aware split: the ledgers field contains commas and must stay
+    // a single field (stripping all quotes first used to break it).
+    auto tx = splitCsvLine(txString, ',');
 
     transactionId = txIdCounter++;
     transactionDate = TimestampConverter::stringToTm(tx[3]);
