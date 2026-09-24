@@ -7,11 +7,11 @@
 
 #include <utility>
 #include <memory>
+#include <algorithm>
 
-int walletIdCounter = 0;
 
 Wallet::Wallet() {
-    walletId = walletIdCounter++;
+    walletId = walletIdCounter.fetch_add(1);
 }
 
 Wallet::~Wallet() = default;
@@ -19,6 +19,19 @@ Wallet::~Wallet() = default;
 Wallet::Wallet(std::string currencyType) : Wallet() {
     FileLog::v("Wallet", "Creating wallet with currency type: " + currencyType);
     this->currencyType = std::move(currencyType);
+}
+
+void Wallet::setWalletIdCounter(int counter) {
+    // Forward-only: raising the counter is allowed, resetting it would re-use
+    // wallet ids. Use a CAS loop so concurrent initializers do not lose ids.
+    int current = walletIdCounter.load();
+    while (counter > current &&
+           !walletIdCounter.compare_exchange_weak(current, counter)) {
+    }
+}
+
+int Wallet::getWalletIdCounter() {
+    return walletIdCounter.load();
 }
 
 void Wallet::setIsOutWallet(bool isOut) {
@@ -77,7 +90,7 @@ void Wallet::addToTransaction(BaseTransaction &transaction) {
     bonusBalance += transaction.getAmountBonus();
 }
 
-std::unique_ptr<WalletData> Wallet::getWalletData() {
+std::unique_ptr<WalletData> Wallet::getWalletData() const {
     WalletData walletData = {};
     walletData.walletId = walletId;
     walletData.currencyType = currencyType;
@@ -94,8 +107,8 @@ void Wallet::setCurrencyType(std::string currencyType_) {
     currencyType = std::move(currencyType_);
 }
 
-WalletStruct *Wallet::getWalletStruct() {
-    auto data = new WalletStruct();
+std::unique_ptr<WalletStruct> Wallet::getWalletStruct() {
+    auto data = std::make_unique<WalletStruct>();
     data->walletId = walletId;
     for (auto &transaction: transactions) {
         data->transactions.push_back(transaction.getTransactionStruct());
@@ -132,8 +145,9 @@ bool Wallet::getIsOutWallet() const {
 }
 
 void Wallet::updateTransaction(BaseTransaction &transaction) {
+    int id = transaction.getTransactionId();
     for (auto &tx: transactions) {
-        if (tx.getTransactionStruct().transactionId == transaction.getTransactionStruct().transactionId) {
+        if (tx.getTransactionId() == id) {
             tx = transaction;
             return;
         }
@@ -141,16 +155,16 @@ void Wallet::updateTransaction(BaseTransaction &transaction) {
 }
 
 void Wallet::removeTransaction(BaseTransaction &transaction) {
-    for (auto &tx: transactions) {
-        int transactionId = tx.getTransactionId();
-        if (transactionId == transaction.getTransactionId()) {
+    int id = transaction.getTransactionId();
+    // Plain index scan: erase-remove with a capture referencing the loop
+    // element is invalid, and erasing invalidates iterators and references.
+    for (size_t i = 0; i < transactions.size(); i++) {
+        if (transactions[i].getTransactionId() == id) {
+            const auto &tx = transactions[i];
             balance -= tx.getAmount();
             moneySpent -= tx.getNativeAmount();
             bonusBalance -= tx.getAmountBonus();
-            transactions.erase(std::remove_if(transactions.begin(), transactions.end(),
-                                              [transactionId, &tx](const BaseTransaction &transaction) {
-                                                  return tx.getTransactionId() == transactionId;
-                                              }), transactions.end());
+            transactions.erase(transactions.begin() + static_cast<long>(i));
             return;
         }
     }

@@ -28,30 +28,23 @@ public:
     // Destructor to properly clean up resources
     ~DataHolder() {
         std::lock_guard<std::mutex> lock(mutexData);
-        delete transactionManager;
-        transactionManager = nullptr;
+        transactionManager.reset();
     }
 
-    //! Set the TransactionManager
-    void SetTransactionManager(TransactionManager *tm) {
+    //! Set the TransactionManager (the previous instance is freed automatically)
+    void SetTransactionManager(std::unique_ptr<TransactionManager> tm) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!tm) throw std::invalid_argument("Null pointer to TransactionManager");
-
-        // Clean up previous instance if exists
-        if (transactionManager) {
-            delete transactionManager;
-        }
-
-        transactionManager = tm;
+        transactionManager = std::move(tm);
         initialized_ = transactionManager->isReady();
     }
 
-    //! Get the TransactionManager
+    //! Get the TransactionManager (pointer owned by the DataHolder)
     TransactionManager *GetTransactionManager() {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
         transactionManager->checkTransactionManagerState();
-        return transactionManager;
+        return transactionManager.get();
     }
 
 
@@ -72,7 +65,7 @@ public:
     void loadData(const std::string &dirPath) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
-        return transactionManager->loadData(dirPath);
+        transactionManager->loadData(dirPath);
     }
 
     //! Check if the data is saved
@@ -87,7 +80,7 @@ private:
     bool initialized_ = false;
     mutable std::mutex mutexData; // mutable allows locking in const functions
 
-    TransactionManager *transactionManager = nullptr;
+    std::unique_ptr<TransactionManager> transactionManager;
 
     DataHolder() = default;
 

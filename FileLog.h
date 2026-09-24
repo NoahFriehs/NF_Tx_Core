@@ -82,11 +82,15 @@ public:
 
     //! Set the max log level
     static void setMaxLogLevel(int maxLogLevel) {
-        if (maxLogLevel < 0) {
+        // 0 = nothing, 3 = everything
+        if (maxLogLevel < 0 || maxLogLevel > 3) {
             std::cerr << "Invalid max log level " << maxLogLevel << std::endl;
             return;
         }
-        maxLogLevel = maxLogLevel;
+        if (maxLogLevel != FileLog::maxLogLevel) {
+            i("FileLog", "Max log level set to " + std::to_string(maxLogLevel));
+        }
+        FileLog::maxLogLevel = maxLogLevel;
     }
 
     static int getMaxLogLevel() {

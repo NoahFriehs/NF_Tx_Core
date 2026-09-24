@@ -5,25 +5,31 @@
 #include "PriceCache.h"
 
 double PriceCache::checkCache(const std::string &symbol) {
-    if (testCache(symbol)) {
-        Cache *cacheToCheck = &cache.find(symbol)->second;
-        if (cacheToCheck->isOlderThanFiveMinutes()) {
-            // Handle cache expiration
-            cache.erase(symbol);
-            return -1.0;
-        }
-        return cacheToCheck->getPrice();
+    auto it = cache.find(symbol);
+    if (it == cache.end()) {
+        return -1.0;
     }
-    return -1.0;
+    if (it->second.isOlderThanFiveMinutes()) {
+        // Handle cache expiration
+        cache.erase(it);
+        return -1.0;
+    }
+    return it->second.getPrice();
 }
 
 bool PriceCache::testCache(const std::string &symbol) {
-    Cache *cacheToCheck = &cache.find(symbol)->second;
-    return cache.find(symbol) != cache.end() && !cacheToCheck->isOlderThanFiveMinutes();
+    auto it = cache.find(symbol);
+    return it != cache.end() && !it->second.isOlderThanFiveMinutes();
 }
 
 void PriceCache::addPrice(const std::string &symbol, double price) {
-    auto *cacheToAdd = new Cache(symbol, price);
-    cache.insert({symbol, *cacheToAdd});
+    // Value-map: replace the entry instead of new + insert. The previous
+    // version leaked one Cache per call and insert() would not update an
+    // existing entry, leaving stale prices in the cache.
+    auto it = cache.find(symbol);
+    if (it != cache.end()) {
+        it->second = Cache(symbol, price);
+    } else {
+        cache.emplace(symbol, Cache(symbol, price));
+    }
 }
-

@@ -1,5 +1,5 @@
 //
-// Created by nfriehs on 12/15/23.
+// Created by nfriehs on 11/11/23.
 //
 
 #include "CharUtil.h"
@@ -13,20 +13,21 @@ void copyCharArray(char **destination, char **source, int rows, int cols) {
     }
 }
 
-void stringToCharArray(char destination[MAX_STRING_LENGTH], const std::string &src) {
-    if (src.size() <= MAX_STRING_LENGTH) {
-        std::strcpy(destination, src.c_str());
-    } else {
-        FileLog::w("CharUtil", "String is too long to convert to char array");
-        auto shortStr = src.substr(0, MAX_STRING_LENGTH - 1);
-        std::strcpy(destination, shortStr.c_str());
+void stringToCharArray(char *destination, size_t size, const std::string &src) {
+    if (destination == nullptr || size == 0) return;
+    if (src.size() >= size) {
+        FileLog::w("CharUtil",
+                   "String truncated from " + std::to_string(src.size()) + " to " +
+                   std::to_string(size - 1) + " characters");
     }
+    // snprintf is bounded by size and always NUL-terminates.
+    std::snprintf(destination, size, "%s", src.c_str());
 }
 
 std::string charArrayToString(char source[]) {
     return std::string(source);
 }
 
-void copyCharArrayToString(std::string &destination, const char source[MAX_STRING_LENGTH]) {
+void copyCharArrayToString(std::string &destination, const char source[]) {
     destination = source;
 }

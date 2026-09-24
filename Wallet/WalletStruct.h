@@ -58,13 +58,13 @@ struct CWalletStruct {
     static CWalletStruct convertToCWalletStruct(const WalletStruct &data) {
         CWalletStruct tmStruct;
         tmStruct.walletId = data.walletId;
-        stringToCharArray(tmStruct.currencyType, data.currencyType);
+        stringToCharArray(tmStruct.currencyType, sizeof(tmStruct.currencyType), data.currencyType);
         tmStruct.balance = data.balance;
         tmStruct.nativeBalance = data.nativeBalance;
         tmStruct.bonusBalance = data.bonusBalance;
         tmStruct.moneySpent = data.moneySpent;
         tmStruct.isOutsideWallet = data.isOutsideWallet;
-        stringToCharArray(tmStruct.notes, data.notes);
+        stringToCharArray(tmStruct.notes, sizeof(tmStruct.notes), data.notes);
 
         for (int i = 0; i < data.transactions.size(); i++) {
             if (i >= MAX_TRANSACTIONS) {

@@ -80,7 +80,7 @@ long double BaseTransaction::getToAmount() const {
     return toAmount;
 }
 
-TransactionData BaseTransaction::getTransactionData() {
+TransactionData BaseTransaction::getTransactionData() const {
     TransactionData txData;
     txData.transactionId = transactionId;
     txData.walletId = walletId;
@@ -156,11 +156,15 @@ void BaseTransaction::fromTransactionStruct(const TransactionStruct &data) {
 }
 
 void BaseTransaction::setTxIdCounter(int txIdCounter_) {
-    if (txIdCounter_ <= txIdCounter)
+    // Forward-only: the counter may only increase so that transaction ids are
+    // never reused. Values at or behind the current counter are ignored
+    // (stale saved state) instead of throwing.
+    if (txIdCounter_ > txIdCounter) {
         txIdCounter = txIdCounter_;
-    else {
-        FileLog::e("BaseTransaction", "trying to set a invalid txIdCounter");
-        throw std::runtime_error("trying to set a invalid txIdCounter");
+    } else {
+        FileLog::w("BaseTransaction",
+                   "Ignoring txIdCounter " + std::to_string(txIdCounter_) +
+                           " (current: " + std::to_string(txIdCounter) + ")");
     }
 }
 

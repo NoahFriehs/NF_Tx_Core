@@ -8,6 +8,7 @@
 
 #include <vector>
 #include <memory>
+#include <atomic>
 #include "../Transaction/BaseTransaction.h"
 #include "WalletStruct.h"
 
@@ -18,6 +19,12 @@ public:
     explicit Wallet(std::string currencyType);
 
     ~Wallet();
+
+    //! Set the wallet id counter, forward-only (never resets or throws)
+    static void setWalletIdCounter(int counter);
+
+    //! Current wallet id counter
+    static int getWalletIdCounter();
 
     //! Add a transaction to the wallet
     bool addTransaction(BaseTransaction &transaction, bool overrideTTS = false);
@@ -60,10 +67,10 @@ public:
     void addToTransaction(BaseTransaction &transaction);
 
     //! Return WalletData
-    std::unique_ptr<WalletData> getWalletData();
+    std::unique_ptr<WalletData> getWalletData() const;
 
-    //! Return WalletStruct
-    WalletStruct *getWalletStruct();
+    //! Return WalletStruct (unique ownership, caller owns the result)
+    std::unique_ptr<WalletStruct> getWalletStruct();
 
     //! Fill from WalletStruct
     void setWalletData(const WalletStruct &data);
@@ -85,6 +92,8 @@ private:
     long double moneySpent{};
     bool isOutsideWallet{};
     std::string notes;
+
+    inline static std::atomic<int> walletIdCounter{0}; // shared across all wallets
 };
 
 

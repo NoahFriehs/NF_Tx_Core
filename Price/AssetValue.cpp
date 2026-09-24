@@ -4,6 +4,8 @@
 
 #include "AssetValue.h"
 #include "StaticPrices.h"
+#include "../FileLog.h"
+#include <algorithm>
 
 AssetValue::AssetValue() : isConnected(true), isRunning(true) {}
 
@@ -24,9 +26,14 @@ double AssetValue::getPrice(const std::string &symbol) {
 
 void AssetValue::loadCacheWithData(const std::vector<std::string> &symbols,
                                    const std::vector<double> &prices) {
-    // Implementation details for loading cache with data
-    int len = symbols.size();
-    for (int i = 0; i < len; i++) {
+    // Defensive: only pair up entries that exist in both vectors.
+    const auto len = std::min(symbols.size(), prices.size());
+    if (symbols.size() != prices.size()) {
+        FileLog::w("AssetValue",
+                   "Symbol/price count mismatch (" + std::to_string(symbols.size()) +
+                           " vs " + std::to_string(prices.size()) + ")");
+    }
+    for (size_t i = 0; i < len; i++) {
         cache.addPrice(symbols[i], prices[i]);
     }
 }

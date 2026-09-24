@@ -66,9 +66,14 @@ struct TransactionData {
         auto *root = doc.allocate_node(rapidxml::node_element, "TransactionData");
         doc.append_node(root);
 
-        // Helper function to add a new node with a value to the root
+        // Helper function to add a new node with a value to the root.
+        // Node names and values must outlive the document, so they are
+        // allocated inside it (the lambda parameters are dangling at print
+        // time when passed by pointer).
         auto addNode = [&](const std::string &nodeName, const std::string &value) {
-            auto *node = doc.allocate_node(rapidxml::node_element, nodeName.c_str(), value.c_str());
+            auto *node = doc.allocate_node(rapidxml::node_element,
+                                           doc.allocate_string(nodeName.c_str()),
+                                           doc.allocate_string(value.c_str()));
             root->append_node(node);
         };
 
@@ -189,13 +194,13 @@ struct WalletData {
     [[nodiscard]] CWalletStruct getCWalletStruct() const {
         CWalletStruct walletStruct;
         walletStruct.walletId = walletId;
-        stringToCharArray(walletStruct.currencyType, currencyType);
+        stringToCharArray(walletStruct.currencyType, sizeof(walletStruct.currencyType), currencyType);
         walletStruct.balance = balance;
         walletStruct.nativeBalance = nativeBalance;
         walletStruct.bonusBalance = bonusBalance;
         walletStruct.moneySpent = moneySpent;
         walletStruct.isOutsideWallet = isOutsideWallet;
-        stringToCharArray(walletStruct.notes, notes);
+        stringToCharArray(walletStruct.notes, sizeof(walletStruct.notes), notes);
         return walletStruct;
     }
 
@@ -211,9 +216,12 @@ struct WalletData {
         auto *root = doc.allocate_node(rapidxml::node_element, "WalletData");
         doc.append_node(root);
 
-        // Helper function to add a new node with a value to the root
+        // Helper function to add a new node with a value to the root.
+        // The node name must outlive the document, so it is allocated inside it
+        // (the lambda parameter would be dangling at print time).
         auto addNode = [&](const std::string &nodeName, const std::string &value) {
-            auto *node = doc.allocate_node(rapidxml::node_element, nodeName.c_str());
+            auto *node = doc.allocate_node(rapidxml::node_element,
+                                           doc.allocate_string(nodeName.c_str()));
             node->value(doc.allocate_string(value.c_str()));
             root->append_node(node);
         };
@@ -271,6 +279,7 @@ struct TransactionManagerState {
     bool hasCardTxData = false;
     bool isReadyFlag = false;
     int txIdCounter = 0;
+    int walletIdCounter = 0;
     char currencies[MAX_WALLETS][MAX_STRING_LENGTH] = {};
     char cardTxTypes[MAX_WALLETS][MAX_STRING_LENGTH] = {};
 };

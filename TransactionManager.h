@@ -33,8 +33,9 @@ public:
     //! Calculate the wallet balances
     void calculateWalletBalances();
 
-    //! Return the Currencies
-    std::vector<std::string> getCurrencies();
+    //! Return the Currencies (internal storage, do not keep the reference
+    //! across calls that modify the manager)
+    const std::vector<std::string> & getCurrencies();
 
     //! Return if the TransactionManager is ready
     bool isReady() const;
@@ -48,11 +49,12 @@ public:
     //! Return the total money spent on card
     double getTotalMoneySpentCard() const;
 
-    //! Return the transactions
-    std::vector<BaseTransaction> getTransactions();
+    //! Return the transactions (internal storage, do not keep the reference
+    //! across calls that modify the manager)
+    const std::vector<BaseTransaction> & getTransactions();
 
-    //! Return the card transactions
-    std::vector<BaseTransaction> getCardTransactions();
+    //! Return the card transactions (internal storage, see getTransactions())
+    const std::vector<BaseTransaction> & getCardTransactions();
 
     //! Return the total value of assets
     double getTotalValueOfAssets() const;
@@ -69,11 +71,11 @@ public:
     //! Return the value of assets of the given wallet
     double getValueOfAssets(int walletId);
 
-    //! Return all the wallets
-    std::map<std::string, Wallet> getWallets();
+    //! Return all the wallets (internal storage, see getTransactions())
+    const std::map<std::string, Wallet> & getWallets();
 
-    //! Return all the card wallets
-    std::map<std::string, Wallet> getCardWallets();
+    //! Return all the card wallets (internal storage, see getTransactions())
+    const std::map<std::string, Wallet> & getCardWallets();
 
     //! Return the bonus of the given wallet
     double getTotalBonus(int walletId);
@@ -81,8 +83,10 @@ public:
     //! Return the money spent of the given wallet
     double getMoneySpent(int walletId);
 
-    //! Return the wallet (also card wallet)
-    std::unique_ptr<Wallet> getWallet(int walletId);
+    //! Return the wallet (also card wallet), nullptr if not found.
+    //! The pointer is owned by the manager and valid until the next call
+    //! that modifies the wallets.
+    Wallet *getWallet(int walletId);
 
     //! Save the data to the given directory
     void saveData(const std::string &dirPath);
@@ -111,8 +115,8 @@ public:
     //! Clear all the data
     void clearAll();
 
-    //! Return the card wallet
-    std::unique_ptr<Wallet> getCardWallet(int walletId);
+    //! Return the card wallet (see getWallet())
+    Wallet *getCardWallet(int walletId);
 
     //! \brief Returns the active modes. (1 = Crypto, 2 = Card, 3 = Crypto + Card)
     int getActiveModes() const;
@@ -177,7 +181,11 @@ private:
     Wallet *getNonStrictWallet(std::string &tt);
 
     //! Return the state of the TransactionManager
-    TMState getTransactionManagerState();
+    TransactionManagerState getTransactionManagerState();
+
+    //! Get or create a wallet in the given map (operator[] on the maps
+    //! would default-construct wallets with a fresh, non-monotonic id)
+    Wallet &getOrCreateWallet(std::map<std::string, Wallet> &target, const std::string &key);
 
     //! Set the state of the TransactionManager
     void setTransactionManagerState(const TransactionManagerState &state);

@@ -79,23 +79,23 @@ struct CTransactionStruct {
         cTMStruct.transactionId = originalStruct.transactionId;
         cTMStruct.walletId = originalStruct.walletId;
         cTMStruct.fromWalletId = originalStruct.fromWalletId;
-        stringToCharArray(cTMStruct.description, originalStruct.description);
+        stringToCharArray(cTMStruct.description, sizeof(cTMStruct.description), originalStruct.description);
         // Format the date and time as a string
         char _dateTimeStr[MAX_DATE_LENGTH];
         std::strftime(_dateTimeStr, sizeof(_dateTimeStr), "%Y-%m-%d %H:%M:%S",
                       &originalStruct.transactionDate);
         std::strcpy(cTMStruct.dateTimeStr, _dateTimeStr);
-        stringToCharArray(cTMStruct.currencyType, originalStruct.currencyType);
-        stringToCharArray(cTMStruct.toCurrencyType, originalStruct.toCurrencyType);
+        stringToCharArray(cTMStruct.currencyType, sizeof(cTMStruct.currencyType), originalStruct.currencyType);
+        stringToCharArray(cTMStruct.toCurrencyType, sizeof(cTMStruct.toCurrencyType), originalStruct.toCurrencyType);
         cTMStruct.amount = originalStruct.amount;
         cTMStruct.toAmount = originalStruct.toAmount;
         cTMStruct.nativeAmount = originalStruct.nativeAmount;
         cTMStruct.amountBonus = originalStruct.amountBonus;
         cTMStruct.transactionType = originalStruct.transactionType;
-        stringToCharArray(cTMStruct.transactionTypeString, originalStruct.transactionTypeString);
-        stringToCharArray(cTMStruct.transactionHash, originalStruct.transactionHash);
+        stringToCharArray(cTMStruct.transactionTypeString, sizeof(cTMStruct.transactionTypeString), originalStruct.transactionTypeString);
+        stringToCharArray(cTMStruct.transactionHash, sizeof(cTMStruct.transactionHash), originalStruct.transactionHash);
         cTMStruct.isOutsideTransaction = originalStruct.isOutsideTransaction;
-        stringToCharArray(cTMStruct.notes, originalStruct.notes);
+        stringToCharArray(cTMStruct.notes, sizeof(cTMStruct.notes), originalStruct.notes);
 
         return cTMStruct;
     }

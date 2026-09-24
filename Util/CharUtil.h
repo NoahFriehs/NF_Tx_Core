@@ -1,5 +1,5 @@
 //
-// Created by nfriehs on 12/15/23.
+// Created by nfriehs on 11/11/23.
 //
 
 #ifndef NF_TX_CORE_CHARUTIL_H
@@ -8,17 +8,23 @@
 #include "../FileLog.h"
 #include "../MagicNumbers.h"
 #include <cstring>
+#include <cctype>
+#include <cstdio>
 
 // Utility function to copy a 2D char array
 void copyCharArray(char **destination, char **source, int rows, int cols);
 
-//! Utility function to copy a string to a char array
-void stringToCharArray(char destination[MAX_STRING_LENGTH], const std::string &src);
+//! Copy a string to a char array.
+//! The destination is always NUL-terminated and the copy is bounded by
+//! `size` bytes, so it can safely be used with arrays of any size
+//! (the old overload claimed a MAX_STRING_LENGTH capacity, which overflowed
+//! smaller buffers such as CTransactionStruct.transactionTypeString[20]).
+void stringToCharArray(char *destination, size_t size, const std::string &src);
 
-//! Utility function to copy a char array to a string
+//! Copy a char array to a string
 std::string charArrayToString(char source[]);
 
-//! Utility function to copy a char array to a string
-void copyCharArrayToString(std::string &destination, const char source[MAX_STRING_LENGTH]);
+//! Copy a char array to a string
+void copyCharArrayToString(std::string &destination, const char source[]);
 
 #endif //NF_TX_CORE_CHARUTIL_H

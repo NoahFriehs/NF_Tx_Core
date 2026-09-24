@@ -67,7 +67,7 @@ public:
     [[nodiscard]] long double getToAmount() const;
 
     //! Return the transaction data
-    TransactionData getTransactionData();
+    TransactionData getTransactionData() const;
 
     //! Return the transaction struct
     TransactionStruct getTransactionStruct();

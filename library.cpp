@@ -6,9 +6,11 @@
 #include "TimeSpan.h"
 #include <memory>
 
-#ifdef ANDROID
+#ifdef __ANDROID__
 #include <jni.h>
 #endif
+
+
 
 
 
@@ -27,7 +29,7 @@ bool init(const std::string &logFilePath, const std::string &loadDirPath) {
 
     auto transactionManager = std::make_unique<TransactionManager>();
 
-    DataHolder::GetInstance().SetTransactionManager(transactionManager.release());
+    DataHolder::GetInstance().SetTransactionManager(std::move(transactionManager));
     if (DataHolder::GetInstance().checkSavedData() && !loadDirPath.empty()) {
         FileLog::i("library", "Saved data found, loading...");
         DataHolder::GetInstance().loadData(loadDirPath);
@@ -75,7 +77,7 @@ bool initWithData(const std::vector<std::string> &data, int mode, const std::str
     end = timeSpan.end();
     FileLog::i("library", "Processing took " + std::to_string(end) + " milliseconds");
 
-    dataHolder.SetTransactionManager(transactionManager.release());
+    dataHolder.SetTransactionManager(std::move(transactionManager));
 
     // return true if successful
     return dataHolder.isInitialized();
@@ -119,9 +121,10 @@ double getMoneySpent(int walletId) {
 
 
 std::vector<std::string> getWalletsAsStrings() {
-    std::map<std::string, Wallet> wallets = DataHolder::GetInstance().GetTransactionManager()->getWallets();
+    const auto &wallets = DataHolder::GetInstance().GetTransactionManager()->getWallets();
     std::vector<std::string> vec;
-    for (auto &wallet: wallets) {
+    vec.reserve(wallets.size());
+    for (const auto &wallet: wallets) {
         vec.emplace_back(wallet.second.getWalletData()->serializeToXml());
     }
     FileLog::i("library", "Returning " + std::to_string(vec.size()) + " wallets");
@@ -129,9 +132,10 @@ std::vector<std::string> getWalletsAsStrings() {
 }
 
 std::vector<std::string> getTransactionsAsStrings() {
-    std::vector<BaseTransaction> transactions = DataHolder::GetInstance().GetTransactionManager()->getTransactions();
+    const auto &transactions = DataHolder::GetInstance().GetTransactionManager()->getTransactions();
     std::vector<std::string> vec;
-    for (auto &tx: transactions) {
+    vec.reserve(transactions.size());
+    for (const auto &tx: transactions) {
         vec.emplace_back(tx.getTransactionData().serializeToXml());
     }
     FileLog::i("library", "Returning " + std::to_string(vec.size()) + " transactions");
@@ -139,9 +143,10 @@ std::vector<std::string> getTransactionsAsStrings() {
 }
 
 std::vector<std::string> getCardWalletsAsStrings() {
-    std::map<std::string, Wallet> wallets = DataHolder::GetInstance().GetTransactionManager()->getCardWallets();
+    const auto &wallets = DataHolder::GetInstance().GetTransactionManager()->getCardWallets();
     std::vector<std::string> vec;
-    for (auto &wallet: wallets) {
+    vec.reserve(wallets.size());
+    for (const auto &wallet: wallets) {
         vec.emplace_back(wallet.second.getWalletData()->serializeToXml());
     }
     FileLog::i("library", "Returning " + std::to_string(vec.size()) + " card wallets");
@@ -149,9 +154,10 @@ std::vector<std::string> getCardWalletsAsStrings() {
 }
 
 std::vector<std::string> getCardTransactionsAsStrings() {
-    std::vector<BaseTransaction> transactions = DataHolder::GetInstance().GetTransactionManager()->getCardTransactions();
+    const auto &transactions = DataHolder::GetInstance().GetTransactionManager()->getCardTransactions();
     std::vector<std::string> vec;
-    for (auto &tx: transactions) {
+    vec.reserve(transactions.size());
+    for (const auto &tx: transactions) {
         vec.emplace_back(tx.getTransactionData().serializeToXml());
     }
     FileLog::i("library", "Returning " + std::to_string(vec.size()) + " card transactions");
@@ -239,353 +245,381 @@ int getActiveModes() {
     return DataHolder::GetInstance().GetTransactionManager()->getActiveModes();
 }
 
+#ifdef __ANDROID__
 
-#ifdef ANDROID
+namespace {
+
+// RAII wrapper keeping GetStringUTFChars/ReleaseStringUTFChars in lockstep.
+struct ScopedUtfChars {
+    JNIEnv *env;
+    jstring string;
+    const char *chars;
+
+    ScopedUtfChars(JNIEnv *env_, jstring string_) : env(env_), string(string_), chars(nullptr) {
+        if (env != nullptr && string != nullptr) {
+            chars = env->GetStringUTFChars(string, nullptr);
+        }
+    }
+
+    ~ScopedUtfChars() {
+        if (env != nullptr && string != nullptr && chars != nullptr) {
+            env->ReleaseStringUTFChars(string, chars);
+        }
+    }
+
+    explicit operator bool() const { return chars != nullptr; }
+
+    std::string value() const { return chars == nullptr ? std::string() : std::string(chars); }
+};
+
+// Build a java.lang.String[] from std::string values, releasing every
+// temporary local reference (including the per-element jstrings) as we go.
+jobjectArray stringsToJArray(JNIEnv *env, const std::vector<std::string> &values) {
+    jclass stringClass = env->FindClass("java/lang/String");
+    if (stringClass == nullptr) return nullptr;
+    auto result = env->NewObjectArray(static_cast<jsize>(values.size()), stringClass, nullptr);
+    env->DeleteLocalRef(stringClass);
+    if (result == nullptr) return nullptr;
+    for (size_t i = 0; i < values.size(); i++) {
+        jstring value = env->NewStringUTF(values[i].c_str());
+        if (value == nullptr) break;
+        env->SetObjectArrayElement(result, static_cast<jsize>(i), value);
+        env->DeleteLocalRef(value);
+    }
+    return result;
+}
+
+// Read a java.lang.String[] into std::vector<std::string>.
+bool jArrayToStrings(JNIEnv *env, jobjectArray array, std::vector<std::string> &out) {
+    if (array == nullptr) return false;
+    jsize len = env->GetArrayLength(array);
+    out.reserve(static_cast<size_t>(len));
+    for (jsize i = 0; i < len; i++) {
+        auto element = env->GetObjectArrayElement(array, i);
+        if (element == nullptr) continue;
+        ScopedUtfChars utf(env, (jstring) element);
+        env->DeleteLocalRef(element);
+        if (utf) out.emplace_back(utf.value());
+    }
+    return true;
+}
+
+// Read a boxed Double[] (java.lang.Double elements) into std::vector<double>.
+bool jArrayToDoubles(JNIEnv *env, jobjectArray array, std::vector<double> &out) {
+    if (array == nullptr) return false;
+    jsize len = env->GetArrayLength(array);
+    out.reserve(static_cast<size_t>(len));
+    for (jsize i = 0; i < len; i++) {
+        auto element = env->GetObjectArrayElement(array, i);
+        if (element == nullptr) continue;
+        jclass clazz = env->GetObjectClass(element);
+        jmethodID doubleValue =
+                clazz != nullptr ? env->GetMethodID(clazz, "doubleValue", "()D") : nullptr;
+        if (doubleValue != nullptr) {
+            out.push_back(env->CallDoubleMethod(element, doubleValue));
+            if (env->ExceptionCheck()) env->ExceptionClear();
+        }
+        if (clazz != nullptr) env->DeleteLocalRef(clazz);
+        env->DeleteLocalRef(element);
+    }
+    return true;
+}
+
+} // namespace
+
+
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_init(JNIEnv *env, jobject thiz, jstring path,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_init(JNIEnv *env, jobject,
+                                                            jstring path,
                                                             jstring loadDirPath) {
-    const char *rawString = env->GetStringUTFChars(path, nullptr);
-    if (!rawString) return JNI_FALSE;
-    const char *rawString2 = env->GetStringUTFChars(loadDirPath, nullptr);
-    if (!rawString2) {
-        env->ReleaseStringUTFChars(path, rawString);
+    try {
+        ScopedUtfChars pathChars(env, path);
+        ScopedUtfChars loadDirChars(env, loadDirPath);
+        if (!pathChars || !loadDirChars) return JNI_FALSE;
+        return init(pathChars.value(), loadDirChars.value()) ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI init failed: " + std::string(e.what()));
+        return JNI_FALSE;
+    } catch (...) {
+        FileLog::e("library", "JNI init failed: unknown error");
         return JNI_FALSE;
     }
-
-    std::string filePath = rawString;
-    std::string loadDir = rawString2;
-
-    env->ReleaseStringUTFChars(path, rawString);
-    env->ReleaseStringUTFChars(loadDirPath, rawString2);
-
-    return init(filePath, loadDir);
 }
 
 extern "C"
 JNIEXPORT jboolean JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_initWithData(JNIEnv *env, jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_initWithData(JNIEnv *env, jobject,
                                                                     jobjectArray data,
-                                                                    jint dataSize, jint mode,
-                                                                    jstring path) {
-    if (!data || !path) return JNI_FALSE;
-
-    std::vector<std::string> vec;
-    jsize len = env->GetArrayLength(data);
-
-    // Collect all string references first
-    std::vector<std::pair<jstring, const char*>> stringRefs;
-
-    for (int i = 0; i < len; i++) {
-        auto string = (jstring) env->GetObjectArrayElement(data, i);
-        if (string) {
-            const char *rawString = env->GetStringUTFChars(string, nullptr);
-            if (rawString) {
-                vec.emplace_back(rawString);
-                stringRefs.push_back({string, rawString});
-            }
-        }
-    }
-
-    const char *pathString = env->GetStringUTFChars(path, nullptr);
-    if (!pathString) {
-        // Clean up all string references
-        for (auto& ref : stringRefs) {
-            env->ReleaseStringUTFChars(ref.first, ref.second);
-        }
+                                                                    jint, jint mode, jstring path) {
+    try {
+        std::vector<std::string> lines;
+        if (!jArrayToStrings(env, data, lines)) return JNI_FALSE;
+        ScopedUtfChars pathChars(env, path);
+        if (!pathChars) return JNI_FALSE;
+        return initWithData(lines, mode, pathChars.value()) ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI initWithData failed: " + std::string(e.what()));
+        return JNI_FALSE;
+    } catch (...) {
+        FileLog::e("library", "JNI initWithData failed: unknown error");
         return JNI_FALSE;
     }
-
-    std::string filePath = pathString;
-
-    // Release all string references
-    for (auto& ref : stringRefs) {
-        env->ReleaseStringUTFChars(ref.first, ref.second);
-    }
-    env->ReleaseStringUTFChars(path, pathString);
-
-    return initWithData(vec, mode, filePath);
 }
+
 extern "C"
 JNIEXPORT jobjectArray JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getCurrencies(JNIEnv *env, jobject thiz) {
-    std::vector<std::string> currencies = getCurrencies();
-    jobjectArray ret = env->NewObjectArray(currencies.size(), env->FindClass("java/lang/String"),
-                                           nullptr);
-    for (int i = 0; i < currencies.size(); i++) {
-        env->SetObjectArrayElement(ret, i, env->NewStringUTF(currencies[i].c_str()));
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getCurrencies(JNIEnv *env, jobject) {
+    try {
+        return stringsToJArray(env, getCurrencies());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getCurrencies failed: " + std::string(e.what()));
+        return nullptr;
     }
-    return ret;
 }
+
 extern "C"
 JNIEXPORT void JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setPrice(JNIEnv *env, jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setPrice(JNIEnv *env, jobject,
                                                                 jobjectArray prices) {
-    std::vector<double> vec;
-    jsize len = env->GetArrayLength(prices);
-    for (int i = 0; i < len; i++) {
-        auto price = env->GetObjectArrayElement(prices, i);
-        if (price != nullptr) {
-            jclass clazz = env->GetObjectClass(price);
-            jmethodID methodID = env->GetMethodID(clazz, "doubleValue", "()D");
-            double value = env->CallDoubleMethod(price, methodID);
-            vec.emplace_back(value);
-        }
+    try {
+        std::vector<double> values;
+        if (!jArrayToDoubles(env, prices, values)) return;
+        setPrice(values);
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI setPrice failed: " + std::string(e.what()));
     }
-    setPrice(vec);
-}
-
-
-extern "C"
-JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalMoneySpent(JNIEnv *env,
-                                                                          jobject thiz) {
-    return getTotalMoneySpent();
 }
 
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalMoneySpentCard(JNIEnv *env,
-                                                                              jobject thiz) {
-    return getTotalValueOfAssetsCard();
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalMoneySpent(JNIEnv *, jobject) {
+    try {
+        return getTotalMoneySpent();
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getTotalMoneySpent failed: " + std::string(e.what()));
+        return 0.0;
+    }
 }
 
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getValueOfAssets(JNIEnv *env, jobject thiz) {
-    return getTotalValueOfAssets();
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalMoneySpentCard(JNIEnv *,
+                                                                              jobject) {
+    try {
+        return getTotalMoneySpentCard();
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getTotalMoneySpentCard failed: " + std::string(e.what()));
+        return 0.0;
+    }
 }
+
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalBonus(JNIEnv *env, jobject thiz) {
-    return getTotalBonus();
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getValueOfAssets(JNIEnv *, jobject) {
+    try {
+        return getTotalValueOfAssets();
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getValueOfAssets failed: " + std::string(e.what()));
+        return 0.0;
+    }
+}
+
+extern "C"
+JNIEXPORT jdouble JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalBonus(JNIEnv *, jobject) {
+    try {
+        return getTotalBonus();
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getTotalBonus failed: " + std::string(e.what()));
+        return 0.0;
+    }
 }
 
 extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTransactionsAsString(JNIEnv *env,
-                                                                               jobject thiz) {
-    std::vector<std::string> vec = getTransactionsAsStrings();
-    jobjectArray ret = env->NewObjectArray(vec.size(), env->FindClass("java/lang/String"), nullptr);
-    for (int i = 0; i < vec.size(); i++) {
-        env->SetObjectArrayElement(ret, i, env->NewStringUTF(vec[i].c_str()));
+                                                                               jobject) {
+    try {
+        return stringsToJArray(env, getTransactionsAsStrings());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getTransactionsAsString failed: " + std::string(e.what()));
+        return nullptr;
     }
-    return ret;
 }
 
 extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getCardTransactionsAsStrings(JNIEnv *env,
-                                                                                    jobject thiz) {
-    std::vector<std::string> vec = getCardTransactionsAsStrings();
-    jobjectArray ret = env->NewObjectArray(vec.size(), env->FindClass("java/lang/String"), nullptr);
-    for (int i = 0; i < vec.size(); i++) {
-        env->SetObjectArrayElement(ret, i, env->NewStringUTF(vec[i].c_str()));
+                                                                                    jobject) {
+    try {
+        return stringsToJArray(env, getCardTransactionsAsStrings());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getCardTransactionsAsStrings failed: " +
+                               std::string(e.what()));
+        return nullptr;
     }
-    return ret;
 }
 
 extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getWalletsAsString(JNIEnv *env,
-                                                                          jobject thiz) {
-    std::vector<std::string> vec = getWalletsAsStrings();
-    jobjectArray ret = env->NewObjectArray(vec.size(), env->FindClass("java/lang/String"), nullptr);
-    for (int i = 0; i < vec.size(); i++) {
-        env->SetObjectArrayElement(ret, i, env->NewStringUTF(vec[i].c_str()));
+                                                                          jobject) {
+    try {
+        return stringsToJArray(env, getWalletsAsStrings());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getWalletsAsString failed: " + std::string(e.what()));
+        return nullptr;
     }
-    return ret;
 }
 
 extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getCardWalletsAsStrings(JNIEnv *env,
-                                                                               jobject thiz) {
-    std::vector<std::string> vec = getCardWalletsAsStrings();
-    jobjectArray ret = env->NewObjectArray(vec.size(), env->FindClass("java/lang/String"), nullptr);
-    for (int i = 0; i < vec.size(); i++) {
-        env->SetObjectArrayElement(ret, i, env->NewStringUTF(vec[i].c_str()));
+                                                                               jobject) {
+    try {
+        return stringsToJArray(env, getCardWalletsAsStrings());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getCardWalletsAsStrings failed: " +
+                               std::string(e.what()));
+        return nullptr;
     }
-    return ret;
 }
-
 
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getValueOfAssetsByWID(JNIEnv *env,
-                                                                             jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getValueOfAssetsByWID(JNIEnv *, jobject,
                                                                              jint wallet_id) {
-    return getValueOfAssets(wallet_id);
+    try {
+        return getValueOfAssets(wallet_id);
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getValueOfAssetsByWID failed: " + std::string(e.what()));
+        return 0.0;
+    }
 }
+
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalBonusByWID(JNIEnv *env, jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalBonusByWID(JNIEnv *, jobject,
                                                                           jint wallet_id) {
-    return getBonus(wallet_id);
+    try {
+        return getBonus(wallet_id);
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getTotalBonusByWID failed: " + std::string(e.what()));
+        return 0.0;
+    }
 }
+
 extern "C"
 JNIEXPORT jdouble JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getMoneySpentByWID(JNIEnv *env, jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getMoneySpentByWID(JNIEnv *, jobject,
                                                                           jint wallet_id) {
-    return getMoneySpent(wallet_id);
-}
-extern "C"
-JNIEXPORT void JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_save(JNIEnv *env, jobject thiz,
-                                                            jstring path) {
-    if (!path) return;
-
-    const char *rawString = env->GetStringUTFChars(path, nullptr);
-    if (!rawString) return;
-
-    std::string filePath = rawString;
-    env->ReleaseStringUTFChars(path, rawString);
-
-    save(filePath);
+    try {
+        return getMoneySpent(wallet_id);
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getMoneySpentByWID failed: " + std::string(e.what()));
+        return 0.0;
+    }
 }
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_load(JNIEnv *env, jobject thiz,
-                                                            jstring path) {
-    if (!path) return;
-
-    const char *rawString = env->GetStringUTFChars(path, nullptr);
-    if (!rawString) return;
-
-    std::string filePath = rawString;
-    env->ReleaseStringUTFChars(path, rawString);
-
-    loadData(filePath);
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_save(JNIEnv *env, jobject, jstring path) {
+    try {
+        ScopedUtfChars pathChars(env, path);
+        if (!pathChars) return;
+        save(pathChars.value());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI save failed: " + std::string(e.what()));
+    }
 }
+
+extern "C"
+JNIEXPORT void JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_load(JNIEnv *env, jobject, jstring path) {
+    try {
+        ScopedUtfChars pathChars(env, path);
+        if (!pathChars) return;
+        loadData(pathChars.value());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI load failed: " + std::string(e.what()));
+    }
+}
+
 extern "C"
 JNIEXPORT jint JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getModes(JNIEnv *env, jobject thiz) {
-    return getActiveModes();
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getModes(JNIEnv *, jobject) {
+    try {
+        return getActiveModes();
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getModes failed: " + std::string(e.what()));
+        return 0;
+    }
 }
+
 extern "C"
 JNIEXPORT void JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setTransactionData(JNIEnv *env, jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setTransactionData(JNIEnv *env, jobject,
                                                                           jobjectArray data) {
-    if (!data) return;
-
-    std::vector<std::string> vec;
-    jsize len = env->GetArrayLength(data);
-
-    std::vector<std::pair<jstring, const char*>> stringRefs;
-
-    for (int i = 0; i < len; i++) {
-        auto string = (jstring) env->GetObjectArrayElement(data, i);
-        if (string) {
-            const char *rawString = env->GetStringUTFChars(string, nullptr);
-            if (rawString) {
-                vec.emplace_back(rawString);
-                stringRefs.push_back({string, rawString});
-            }
-        }
+    try {
+        std::vector<std::string> lines;
+        if (!jArrayToStrings(env, data, lines)) return;
+        setTransactionData(lines);
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI setTransactionData failed: " + std::string(e.what()));
     }
-
-    // Release all string references
-    for (auto& ref : stringRefs) {
-        env->ReleaseStringUTFChars(ref.first, ref.second);
-    }
-
-    setTransactionData(vec);
 }
+
 extern "C"
 JNIEXPORT void JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setWalletData(JNIEnv *env, jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setWalletData(JNIEnv *env, jobject,
                                                                      jobjectArray data) {
-    if (!data) return;
-
-    std::vector<std::string> vec;
-    jsize len = env->GetArrayLength(data);
-
-    std::vector<std::pair<jstring, const char*>> stringRefs;
-
-    for (int i = 0; i < len; i++) {
-        auto string = (jstring) env->GetObjectArrayElement(data, i);
-        if (string) {
-            const char *rawString = env->GetStringUTFChars(string, nullptr);
-            if (rawString) {
-                vec.emplace_back(rawString);
-                stringRefs.push_back({string, rawString});
-            }
-        }
+    try {
+        std::vector<std::string> lines;
+        if (!jArrayToStrings(env, data, lines)) return;
+        setWalletData(lines);
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI setWalletData failed: " + std::string(e.what()));
     }
-
-    // Release all string references
-    for (auto& ref : stringRefs) {
-        env->ReleaseStringUTFChars(ref.first, ref.second);
-    }
-
-    setWalletData(vec);
 }
+
 extern "C"
 JNIEXPORT void JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setCardTransactionData(JNIEnv *env,
-                                                                              jobject thiz,
+                                                                              jobject,
                                                                               jobjectArray data) {
-    if (!data) return;
-
-    std::vector<std::string> vec;
-    jsize len = env->GetArrayLength(data);
-
-    std::vector<std::pair<jstring, const char*>> stringRefs;
-
-    for (int i = 0; i < len; i++) {
-        auto string = (jstring) env->GetObjectArrayElement(data, i);
-        if (string) {
-            const char *rawString = env->GetStringUTFChars(string, nullptr);
-            if (rawString) {
-                vec.emplace_back(rawString);
-                stringRefs.push_back({string, rawString});
-            }
-        }
+    try {
+        std::vector<std::string> lines;
+        if (!jArrayToStrings(env, data, lines)) return;
+        setCardTransactionData(lines);
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI setCardTransactionData failed: " + std::string(e.what()));
     }
-
-    // Release all string references
-    for (auto& ref : stringRefs) {
-        env->ReleaseStringUTFChars(ref.first, ref.second);
-    }
-
-    setCardTransactionData(vec);
 }
+
 extern "C"
 JNIEXPORT void JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setCardWalletData(JNIEnv *env, jobject thiz,
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_setCardWalletData(JNIEnv *env,
+                                                                         jobject,
                                                                          jobjectArray data) {
-    if (!data) return;
-
-    std::vector<std::string> vec;
-    jsize len = env->GetArrayLength(data);
-
-    std::vector<std::pair<jstring, const char*>> stringRefs;
-
-    for (int i = 0; i < len; i++) {
-        auto string = (jstring) env->GetObjectArrayElement(data, i);
-        if (string) {
-            const char *rawString = env->GetStringUTFChars(string, nullptr);
-            if (rawString) {
-                vec.emplace_back(rawString);
-                stringRefs.push_back({string, rawString});
-            }
-        }
+    try {
+        std::vector<std::string> lines;
+        if (!jArrayToStrings(env, data, lines)) return;
+        setCardWalletData(lines);
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI setCardWalletData failed: " + std::string(e.what()));
     }
-
-    // Release all string references
-    for (auto& ref : stringRefs) {
-        env->ReleaseStringUTFChars(ref.first, ref.second);
-    }
-
-    setCardWalletData(vec);
 }
 
 extern "C"
 JNIEXPORT void JNICALL
-Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_calculateWalletBalances(JNIEnv *env,
-                                                                               jobject thiz) {
-    calculateBalances();
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_calculateWalletBalances(JNIEnv *,
+                                                                               jobject) {
+    try {
+        calculateBalances();
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI calculateWalletBalances failed: " + std::string(e.what()));
+    }
 }
 
-#endif
+#endif // __ANDROID__
