@@ -29,9 +29,17 @@ void AssetValue::loadCacheWithData(const std::vector<std::string> &symbols,
     // Defensive: only pair up entries that exist in both vectors.
     const auto len = std::min(symbols.size(), prices.size());
     if (symbols.size() != prices.size()) {
-        FileLog::w("AssetValue",
-                   "Symbol/price count mismatch (" + std::to_string(symbols.size()) +
-                           " vs " + std::to_string(prices.size()) + ")");
+        // No symbols (e.g. right after clearAll) is harmless; a real
+        // mismatch between non-empty vectors is a bug in the caller.
+        if (symbols.empty()) {
+            FileLog::d("AssetValue",
+                       "No currencies known, skipping price update for " +
+                               std::to_string(prices.size()) + " prices");
+        } else {
+            FileLog::w("AssetValue",
+                       "Symbol/price count mismatch (" + std::to_string(symbols.size()) +
+                               " vs " + std::to_string(prices.size()) + ")");
+        }
     }
     for (size_t i = 0; i < len; i++) {
         cache.addPrice(symbols[i], prices[i]);

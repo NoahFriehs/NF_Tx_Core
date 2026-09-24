@@ -9,7 +9,7 @@
 // instead of silent, every file written here starts with a FileHeader:
 //
 //     char  magic[4]   "CWCP"
-//     int   version    1
+//     int   version    2
 //     int   longDoubleSize  sizeof(long double) on the writing machine
 //
 // Files without a matching header are treated as empty/corrupt rather than
@@ -33,7 +33,7 @@ namespace BinaryUtil {
 // Header for every serialized file. See the comment at the top of this file.
 struct FileHeader {
     char magic[4]{'C', 'W', 'C', 'P'};
-    int version{1};
+    int version{2};
     int longDoubleSize{static_cast<int>(sizeof(long double))};
 };
 
@@ -55,7 +55,7 @@ bool readAndValidateHeader(std::ifstream &file) {
         FileLog::w("BinaryUtil", "Bad magic, treating file as corrupt");
         return false;
     }
-    if (header.version != 1) {
+    if (header.version != 2) {
         FileLog::w("BinaryUtil", "Unsupported version " + std::to_string(header.version));
         return false;
     }

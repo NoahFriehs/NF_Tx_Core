@@ -161,7 +161,8 @@ void BaseTransaction::setTxIdCounter(int txIdCounter_) {
     // (stale saved state) instead of throwing.
     if (txIdCounter_ > txIdCounter) {
         txIdCounter = txIdCounter_;
-    } else {
+    } else if (txIdCounter_ < txIdCounter) {
+        // Equal values are the normal "restore my own state" case - no log.
         FileLog::w("BaseTransaction",
                    "Ignoring txIdCounter " + std::to_string(txIdCounter_) +
                            " (current: " + std::to_string(txIdCounter) + ")");

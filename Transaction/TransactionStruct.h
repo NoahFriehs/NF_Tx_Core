@@ -44,7 +44,9 @@ struct CTransactionStruct {
     long double nativeAmount{};
     long double amountBonus{};
     TransactionType transactionType = NONE;
-    char transactionTypeString[20]{}; // Adjust size as needed
+    // Longest known transaction type string is 29 chars
+    // ("crypto_earn_program_withdrawn") - keep headroom.
+    char transactionTypeString[MAX_STRING_LENGTH]{};
     char transactionHash[64]{}; // Assuming a fixed length for the hash
     bool isOutsideTransaction = false;
     char notes[255]{}; // Assuming a maximum length for the notes
