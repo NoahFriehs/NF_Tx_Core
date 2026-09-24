@@ -14,6 +14,11 @@ BaseTransaction::~BaseTransaction() = default;
 void BaseTransaction::parseCDC(const std::string &txString) {
     auto tx = splitCsvLine(txString, ',');
 
+    // Guard the unbounded column accesses below (operator[] does not check).
+    if (tx.size() < 10) {
+        throw std::invalid_argument(
+                "CDC line needs at least 10 columns, got " + std::to_string(tx.size()));
+    }
     transactionId = txIdCounter++;
     transactionDate = TimestampConverter::stringToTm(tx[0]);
     description = tx[1];
@@ -104,6 +109,11 @@ TransactionData BaseTransaction::getTransactionData() const {
 void BaseTransaction::parseCard(const std::string &txString) {
     auto tx = splitCsvLine(txString, ',');
 
+    // Guard the unbounded column accesses below (operator[] does not check).
+    if (tx.size() < 8) {
+        throw std::invalid_argument(
+                "Card line needs at least 8 columns, got " + std::to_string(tx.size()));
+    }
     transactionId = txIdCounter++;
     transactionDate = TimestampConverter::stringToTm(tx[0]);
     description = tx[1];
@@ -207,6 +217,11 @@ void BaseTransaction::parseKraken(const std::string &txString) {
     // a single field (stripping all quotes first used to break it).
     auto tx = splitCsvLine(txString, ',');
 
+    // Guard the unbounded column accesses below (operator[] does not check).
+    if (tx.size() < 12) {
+        throw std::invalid_argument(
+                "Kraken line needs at least 12 columns, got " + std::to_string(tx.size()));
+    }
     transactionId = txIdCounter++;
     transactionDate = TimestampConverter::stringToTm(tx[3]);
     description = tx[2] + "   " + tx[11];

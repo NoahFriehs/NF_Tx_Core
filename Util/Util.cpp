@@ -82,10 +82,9 @@ std::vector<std::string> splitCsvLine(const std::string &input, char delimiter) 
     }
     result.push_back(current);
 
-    // Match splitString for lines without quotes: a trailing delimiter does
-    // not produce an extra empty token.
-    if (!result.empty() && result.back().empty() && !input.empty() &&
-        input.back() == delimiter) {
+    // Match splitString for lines without quotes: trailing empty tokens
+    // (e.g. from a trailing delimiter) are dropped.
+    while (!result.empty() && result.back().empty()) {
         result.pop_back();
     }
 

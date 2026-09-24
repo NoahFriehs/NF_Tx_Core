@@ -25,10 +25,15 @@ public:
     //! Return the transactions
     std::vector<BaseTransaction> &getTransactions();
 
+    //! Number of lines that could not be parsed (skipped, like the
+    //! Kotlin core's amountTxFailed)
+    size_t getFailedLines() const { return failedLines; }
+
 private:
     std::vector<std::string> data;
     std::vector<BaseTransaction> transactions;
     bool hasData = false;
+    size_t failedLines = 0;
 
     void parseCDC();
 

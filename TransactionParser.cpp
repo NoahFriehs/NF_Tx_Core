@@ -54,12 +54,23 @@ void TransactionParser::parseCDC() {
 
     for (const auto &item: data) {
         BaseTransaction transaction;
-        transaction.parseCDC(item);
-        transactions.push_back(transaction);
+        try {
+            transaction.parseCDC(item);
+            transactions.push_back(transaction);
+        } catch (const std::exception &e) {
+            // Skip the broken line, continue with the rest (same behavior
+            // as the Kotlin core's amountTxFailed counter).
+            failedLines++;
+            FileLog::w("TransactionParser",
+                       "Skipping unparsable line: " + std::string(e.what()));
+        }
     }
 
     FileLog::i("TransactionParser",
-               "Parsed " + std::to_string(transactions.size()) + " transactions");
+               "Parsed " + std::to_string(transactions.size()) + " transactions" +
+                       (failedLines > 0
+                            ? ", " + std::to_string(failedLines) + " line(s) failed"
+                            : ""));
 
     data.clear();
     hasData = false;
@@ -73,12 +84,23 @@ void TransactionParser::parseCard() {
 
     for (const auto &item: data) {
         BaseTransaction transaction;
-        transaction.parseCard(item);
-        transactions.push_back(transaction);
+        try {
+            transaction.parseCard(item);
+            transactions.push_back(transaction);
+        } catch (const std::exception &e) {
+            // Skip the broken line, continue with the rest (same behavior
+            // as the Kotlin core's amountTxFailed counter).
+            failedLines++;
+            FileLog::w("TransactionParser",
+                       "Skipping unparsable line: " + std::string(e.what()));
+        }
     }
 
     FileLog::i("TransactionParser",
-               "Parsed " + std::to_string(transactions.size()) + " transactions");
+               "Parsed " + std::to_string(transactions.size()) + " transactions" +
+                       (failedLines > 0
+                            ? ", " + std::to_string(failedLines) + " line(s) failed"
+                            : ""));
 
     data.clear();
     hasData = false;
@@ -93,12 +115,23 @@ void TransactionParser::parseKraken() {
 
     for (const auto &item: data) {
         BaseTransaction transaction;
-        transaction.parseKraken(item);
-        transactions.push_back(transaction);
+        try {
+            transaction.parseKraken(item);
+            transactions.push_back(transaction);
+        } catch (const std::exception &e) {
+            // Skip the broken line, continue with the rest (same behavior
+            // as the Kotlin core's amountTxFailed counter).
+            failedLines++;
+            FileLog::w("TransactionParser",
+                       "Skipping unparsable line: " + std::string(e.what()));
+        }
     }
 
     FileLog::i("TransactionParser",
-               "Parsed " + std::to_string(transactions.size()) + " transactions");
+               "Parsed " + std::to_string(transactions.size()) + " transactions" +
+                       (failedLines > 0
+                            ? ", " + std::to_string(failedLines) + " line(s) failed"
+                            : ""));
 
     data.clear();
     hasData = false;
