@@ -65,11 +65,11 @@ public:
         transactionManager->loadData(dirPath);
     }
 
-    //! Check if the data is saved
-    bool checkSavedData() {
+    //! Check if the data is saved in the given directory
+    bool checkSavedData(const std::string &dirPath) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
-        return transactionManager->checkSavedData();
+        return transactionManager->checkSavedData(dirPath);
     }
 
 private:

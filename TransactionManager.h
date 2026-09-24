@@ -24,6 +24,11 @@ public:
     //! Set the transactions
     void setTransactions(std::vector<BaseTransaction> &transactions_, Mode mode);
 
+    //! Number of CSV lines that could not be parsed (set after parsing)
+    void setFailedLines(size_t n) { failedLines = n; }
+
+    size_t getFailedLines() const { return failedLines; }
+
     //! Process the transactions
     void processTransactions();
 
@@ -91,8 +96,8 @@ public:
     //! Load the data from the given directory
     void loadData(const std::string &dirPath);
 
-    //! Check if the data is saved
-    bool checkSavedData();
+    //! Check if the data is saved in the given directory
+    bool checkSavedData(const std::string &dirPath);
 
     //! Set the wallet data
     void setWalletData(const std::vector<WalletData> &_wallets);
@@ -137,6 +142,7 @@ private:
     std::vector<std::string> currencies;
     std::vector<std::string> cardTxTypes;
     bool isReadyFlag = false;
+    size_t failedLines = 0;
 
     //! Get the currencies from the transactions
     void getCurrenciesFromTxs();

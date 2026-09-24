@@ -604,12 +604,12 @@ void TransactionManager::setTransactionManagerState(const TransactionManagerStat
     isReadyFlag = state.isReadyFlag;
 }
 
-bool TransactionManager::checkSavedData() {
+bool TransactionManager::checkSavedData(const std::string &dirPath) {
     std::lock_guard<std::mutex> lock(mutex);
-    FileLog::i("TransactionManager", "Checking saved data");
-
-    return checkIfFileExists("wallets") && checkIfFileExists("cardWallets") &&
-           checkIfFileExists("state");
+    // Must use the same dirPath prefix that saveData/loadData write to.
+    return checkIfFileExists(dirPath + "wallets") &&
+           checkIfFileExists(dirPath + "cardWallets") &&
+           checkIfFileExists(dirPath + "state");
 }
 
 bool TransactionManager::checkIfFileExists(const std::string &file) {

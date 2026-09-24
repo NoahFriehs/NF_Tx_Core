@@ -30,7 +30,7 @@ bool init(const std::string &logFilePath, const std::string &loadDirPath) {
     auto transactionManager = std::make_unique<TransactionManager>();
 
     DataHolder::GetInstance().SetTransactionManager(std::move(transactionManager));
-    if (DataHolder::GetInstance().checkSavedData() && !loadDirPath.empty()) {
+    if (!loadDirPath.empty() && DataHolder::GetInstance().checkSavedData(loadDirPath)) {
         FileLog::i("library", "Saved data found, loading...");
         DataHolder::GetInstance().loadData(loadDirPath);
         FileLog::i("library", "Done");
@@ -68,6 +68,7 @@ bool initWithData(const std::vector<std::string> &data, int mode, const std::str
 
     auto transactionManager = std::make_unique<TransactionManager>();
 
+    transactionManager->setFailedLines(parser.getFailedLines());
     transactionManager->setTransactions(parser.getTransactions(), static_cast<Mode>(mode));
 
     timeSpan.start();
@@ -433,6 +434,21 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalBonus(JNIEnv *, j
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI getTotalBonus failed: " + std::string(e.what()));
         return 0.0;
+    }
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getFailedLines(JNIEnv *, jobject) {
+    try {
+        return static_cast<jint>(
+                DataHolder::GetInstance().GetTransactionManager()->getFailedLines());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getFailedLines failed: " + std::string(e.what()));
+        return -1;
+    } catch (...) {
+        FileLog::e("library", "JNI getFailedLines failed: unknown error");
+        return -1;
     }
 }
 
