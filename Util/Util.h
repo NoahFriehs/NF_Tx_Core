@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 10/31/23.
-//
 
 #ifndef NF_TX_CORE_UTIL_H
 #define NF_TX_CORE_UTIL_H

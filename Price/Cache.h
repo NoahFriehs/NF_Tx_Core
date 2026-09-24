@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/19/23.
-//
 
 #ifndef NF_TX_CORE_CACHE_H
 #define NF_TX_CORE_CACHE_H

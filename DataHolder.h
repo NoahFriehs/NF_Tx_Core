@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/7/23.
-//
 
 #ifndef NF_TX_CORE_DATAHOLDER_H
 #define NF_TX_CORE_DATAHOLDER_H

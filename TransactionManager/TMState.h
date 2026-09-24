@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 12/14/23.
-//
 
 #ifndef NF_TX_CORE_TMSTATE_H
 #define NF_TX_CORE_TMSTATE_H

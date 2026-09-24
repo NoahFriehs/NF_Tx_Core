@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/19/23.
-//
 
 #include "PriceCache.h"
 
@@ -23,9 +20,7 @@ bool PriceCache::testCache(const std::string &symbol) {
 }
 
 void PriceCache::addPrice(const std::string &symbol, double price) {
-    // Value-map: replace the entry instead of new + insert. The previous
-    // version leaked one Cache per call and insert() would not update an
-    // existing entry, leaving stale prices in the cache.
+    // insert() does not replace an existing entry - update in place.
     auto it = cache.find(symbol);
     if (it != cache.end()) {
         it->second = Cache(symbol, price);

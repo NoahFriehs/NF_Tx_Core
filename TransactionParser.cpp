@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/7/23.
-//
 
 #include <vector>
 #include <stdexcept>

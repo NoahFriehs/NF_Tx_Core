@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 12/15/23.
-//
 
 #ifndef NF_TX_CORE_MAGICNUMBERS_H
 #define NF_TX_CORE_MAGICNUMBERS_H

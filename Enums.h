@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/11/23.
-//
 
 #ifndef NF_TX_CORE_ENUMS_H
 #define NF_TX_CORE_ENUMS_H

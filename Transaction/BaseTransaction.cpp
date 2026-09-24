@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/7/23.
-//
 
 #include "BaseTransaction.h"
 #include "../Util/Util.h"
@@ -213,8 +210,7 @@ void BaseTransaction::setTransactionTypeString(const std::string &transactionTyp
 void BaseTransaction::parseKraken(const std::string &txString) {
     //"txid","ordertxid","pair","time","type","ordertype","price","cost","fee","vol","margin","misc","ledgers"
     //"T67CDX-SB6EI-XIRITS","O3VT22-PENXL-5BRYNG","XXBTZEUR","2023-06-19 13:34:05.4856","buy","limit",24300.00000,49.99992,0.13000,0.00205761,0.00000,"initiated","LUBMNQ-ZAVX6-IGKZMJ,LWLY4J-OZSCV-P4RHND"
-    // Quote-aware split: the ledgers field contains commas and must stay
-    // a single field (stripping all quotes first used to break it).
+    // Quote-aware split: the ledgers field contains commas.
     auto tx = splitCsvLine(txString, ',');
 
     // Guard the unbounded column accesses below (operator[] does not check).

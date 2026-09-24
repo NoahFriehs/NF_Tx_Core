@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/7/23.
-//
 
 #include <stdexcept>
 #include <cstring>
@@ -553,9 +550,8 @@ TransactionManagerState TransactionManager::getTransactionManagerState() {
     state.txIdCounter = BaseTransaction::getTxIdCounter();
     state.walletIdCounter = Wallet::getWalletIdCounter();
 
-    // Bounded copies: the fixed-size arrays in the state struct are the single
-    // source of bounds. No stack arrays are allocated from dynamic sizes, and
-    // the live members are never modified here.
+    // Bounded copies into the fixed-size state arrays; live members are
+    // never modified here.
     if (currencies.size() > MAX_WALLETS) {
         FileLog::w("TransactionManager",
                    "Truncating " + std::to_string(currencies.size() - MAX_WALLETS)
@@ -689,14 +685,9 @@ void TransactionManager::setCardTransactionData(const std::vector<TransactionDat
     }
 }
 
-// Unlocked helper: DataHolder serializes all TransactionManager access, so no
-// additional locking is taken here (the TM mutex is also held by several TM
-// methods, and locking again would deadlock).
-//
-// The conditions below are ORs: any non-empty collection means data is present.
-// (The previous version had one of the conjunctions inverted, which silently
-// forced hasCardTxData whenever there was no card data and therefore always
-// reported card totals as zero.)
+// Unlocked helper: DataHolder serializes all TransactionManager access,
+// and the TM mutex is already held by several TM methods, so locking
+// again here would deadlock.
 void TransactionManager::checkTransactionManagerState() {
     if (!wallets.empty() || !outWallets.empty() || !transactions.empty()) {
         hasTxData = true;

@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 12/1/23.
-//
 
 #ifndef NF_TX_CORE_STRUCTS_H
 #define NF_TX_CORE_STRUCTS_H
@@ -66,10 +63,8 @@ struct TransactionData {
         auto *root = doc.allocate_node(rapidxml::node_element, "TransactionData");
         doc.append_node(root);
 
-        // Helper function to add a new node with a value to the root.
-        // Node names and values must outlive the document, so they are
-        // allocated inside it (the lambda parameters are dangling at print
-        // time when passed by pointer).
+        // Node names/values must be allocated inside the document: they
+        // are read at print time, long after the lambda has run.
         auto addNode = [&](const std::string &nodeName, const std::string &value) {
             auto *node = doc.allocate_node(rapidxml::node_element,
                                            doc.allocate_string(nodeName.c_str()),
@@ -216,9 +211,7 @@ struct WalletData {
         auto *root = doc.allocate_node(rapidxml::node_element, "WalletData");
         doc.append_node(root);
 
-        // Helper function to add a new node with a value to the root.
-        // The node name must outlive the document, so it is allocated inside it
-        // (the lambda parameter would be dangling at print time).
+        // Node names/values must live as long as the document.
         auto addNode = [&](const std::string &nodeName, const std::string &value) {
             auto *node = doc.allocate_node(rapidxml::node_element,
                                            doc.allocate_string(nodeName.c_str()));

@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 12/15/23.
-//
 
 #include "Util.h"
 #include "../FileLog.h"

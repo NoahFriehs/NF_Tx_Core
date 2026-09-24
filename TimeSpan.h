@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/14/23.
-//
 
 #ifndef NF_TX_CORE_TIMESPAN_H
 #define NF_TX_CORE_TIMESPAN_H

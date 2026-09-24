@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/19/23.
-//
 
 #include "Cache.h"
 

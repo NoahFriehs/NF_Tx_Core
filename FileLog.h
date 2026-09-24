@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/5/23.
-//
 
 #ifndef NF_TX_CORE_FILELOG_H
 #define NF_TX_CORE_FILELOG_H

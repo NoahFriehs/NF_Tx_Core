@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 10/31/23.
-//
 
 #include "Wallet.h"
 #include "../FileLog.h"

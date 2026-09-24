@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/13/23.
-//
 // Native binary persistence helpers.
 //
 // NOTE: this format is a plain memory dump of POD structs. It is NOT

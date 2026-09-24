@@ -1,6 +1,3 @@
-//
-// Created by nfriehs on 11/18/23.
-//
 
 #include "Wallet.h"
 #include <string>
