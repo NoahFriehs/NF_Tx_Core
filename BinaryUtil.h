@@ -24,6 +24,7 @@
 #include <algorithm>
 #include "FileLog.h"
 #include "MagicNumbers.h"
+#include "Structs.h"
 
 namespace BinaryUtil {
 
@@ -34,14 +35,14 @@ struct FileHeader {
     int longDoubleSize{static_cast<int>(sizeof(long double))};
 };
 
-bool writeHeader(std::ofstream &file) {
+inline bool writeHeader(std::ofstream &file) {
     FileHeader header;
     file.write(reinterpret_cast<const char *>(&header), sizeof(FileHeader));
     return file.good();
 }
 
 // Returns true if a header was read and matches this machine.
-bool readAndValidateHeader(std::ifstream &file) {
+inline bool readAndValidateHeader(std::ifstream &file) {
     FileHeader header;
     file.read(reinterpret_cast<char *>(&header), sizeof(FileHeader));
     if (file.gcount() != static_cast<std::streamsize>(sizeof(FileHeader))) {
@@ -133,7 +134,7 @@ void serializeVector(const std::vector<T> &data, const std::string &fileName) {
 
 // Read a vector size field and clamp it to a sane range. A corrupted or
 // malicious count must not cause gigabytes of allocation.
-uint64_t readClampedCount(std::ifstream &file, const std::string &fileName) {
+inline uint64_t readClampedCount(std::ifstream &file, const std::string &fileName) {
     uint64_t count = 0;
     if (!file.read(reinterpret_cast<char *>(&count), sizeof(uint64_t))) {
         return 0;

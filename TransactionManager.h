@@ -29,6 +29,12 @@ public:
 
     size_t getFailedLines() const { return failedLines; }
 
+    //! Return a snapshot of the serializable state
+    TransactionManagerState getTransactionManagerState();
+
+    //! Replace the serializable state (clears, then restores)
+    void setTransactionManagerState(const TransactionManagerState &state);
+
     //! Process the transactions
     void processTransactions();
 
@@ -183,15 +189,9 @@ private:
     //! Card: Get non strict wallet
     Wallet *getNonStrictWallet(std::string &tt);
 
-    //! Return the state of the TransactionManager
-    TransactionManagerState getTransactionManagerState();
-
     //! Get or create a wallet in the given map (operator[] on the maps
     //! would default-construct wallets with a fresh, non-monotonic id)
     Wallet &getOrCreateWallet(std::map<std::string, Wallet> &target, const std::string &key);
-
-    //! Set the state of the TransactionManager
-    void setTransactionManagerState(const TransactionManagerState &state);
 
     //! Check if the file exists
     static bool checkIfFileExists(const std::string &file);

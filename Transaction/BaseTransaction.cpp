@@ -33,7 +33,7 @@ void BaseTransaction::parseCDC(const std::string &txString) {
 
 }
 
-std::string BaseTransaction::getCurrencyType() {
+std::string BaseTransaction::getCurrencyType() const {
     return currencyType;
 }
 
@@ -66,7 +66,7 @@ std::string BaseTransaction::getToCurrencyType() {
     return toCurrencyType;
 }
 
-std::string BaseTransaction::getTransactionTypeString() {
+std::string BaseTransaction::getTransactionTypeString() const {
     return transactionTypeString;
 }
 

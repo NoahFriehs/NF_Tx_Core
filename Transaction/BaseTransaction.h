@@ -37,7 +37,7 @@ public:
     void setFromWalletId(int id);
 
     //! Return the currency type
-    std::string getCurrencyType();
+    std::string getCurrencyType() const;
 
     //! Return the transaction amount
     long double getAmount() const;
@@ -52,7 +52,7 @@ public:
     std::string getToCurrencyType();
 
     //! Return the transaction Type as a string
-    std::string getTransactionTypeString();
+    std::string getTransactionTypeString() const;
 
     //! Return the wallet id
     [[nodiscard]] int getWalletId() const;
