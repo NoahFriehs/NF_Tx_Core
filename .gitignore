@@ -1,4 +1,1 @@
-# Project exclude paths
-/cmake-build-debug/
-# IDE files
-.idea/
+cmake-build-*/
