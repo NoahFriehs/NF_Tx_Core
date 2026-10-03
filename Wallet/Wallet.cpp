@@ -56,7 +56,7 @@ bool Wallet::withdraw(BaseTransaction &transaction) {
     return true;
 }
 
-std::vector<BaseTransaction> Wallet::getTransactions() {
+std::vector<BaseTransaction> Wallet::getTransactions() const {
     return transactions;
 }
 

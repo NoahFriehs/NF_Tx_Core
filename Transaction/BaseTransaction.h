@@ -24,6 +24,8 @@ public:
 
     void parseKraken(const std::string &txString);
 
+    void parseBlockPit(const std::string &txString);
+
     //! Return the transaction id
     int getTransactionId() const;
 
@@ -45,11 +47,17 @@ public:
     //! Return the transaction native amount
     long double getNativeAmount() const;
 
+    //! Return the fee amount (BlockPit: fee paid in this transaction)
+    long double getFeeAmount() const;
+
+    //! Return the fee asset (BlockPit: currency in which fee was paid)
+    std::string getFeeAsset() const;
+
     //! Return the transaction type
-    TransactionType getTransactionType();
+    TransactionType getTransactionType() const;
 
     //! Return the transaction to currency type
-    std::string getToCurrencyType();
+    std::string getToCurrencyType() const;
 
     //! Return the transaction Type as a string
     std::string getTransactionTypeString() const;
@@ -72,6 +80,18 @@ public:
     //! Fill the transaction from the transaction struct
     void fromTransactionStruct(const TransactionStruct &data);
 
+    //! Set the transaction amount
+    void setAmount(long double amount_);
+
+    //! Set the transaction native amount
+    void setNativeAmount(long double nativeAmount_);
+
+    //! Set the currency type
+    void setCurrencyType(const std::string &currencyType_);
+
+    //! Set the to amount
+    void setToAmount(long double toAmount_);
+
     //! Set the transaction id counter
     static void setTxIdCounter(int txIdCounter_);
 
@@ -92,6 +112,7 @@ private:
     std::tm transactionDate{};
     std::string currencyType = {};
     std::string toCurrencyType = {};
+    std::string feeAsset = {};
     long double amount{};
     long double toAmount{};
     long double nativeAmount{};   // Amount in native currency: USD, EUR, etc.
@@ -103,6 +124,9 @@ private:
     std::string transactionHash = {};
     bool isOutsideTransaction = false;
     std::string notes = {};
+
+    //! Check if a currency string represents a fiat currency
+    static bool isFiatCurrency(const std::string &currency);
 
 
 };

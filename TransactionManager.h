@@ -150,6 +150,7 @@ private:
     std::vector<std::string> currencies;
     std::vector<std::string> cardTxTypes;
     bool isReadyFlag = false;
+    Mode currentMode = Default;
     size_t failedLines = 0;
     bool upgradedLegacy_ = false;   // last load used v2 files: next save upgrades them
 
@@ -173,6 +174,9 @@ private:
 
     //! Add Crypto transactions to the wallets
     void addCDCTransactionsToWallets();
+
+    //! Add BlockPit transactions to the wallets
+    void addBlockPitTransactionsToWallets();
 
     //! Create the card wallets
     void createCardWallets();

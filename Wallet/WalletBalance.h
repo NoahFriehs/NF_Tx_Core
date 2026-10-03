@@ -47,6 +47,7 @@ struct WalletsBalance {
 
     void fillFromWalletBalanceMap(const std::map<std::string, WalletBalance> &walletBalanceMap) {
         for (const auto &pair: walletBalanceMap) {
+            // Fiat cash is tracked via the outside wallets, not as a crypto asset
             if (pair.first == "EUR") {
                 continue;
             }

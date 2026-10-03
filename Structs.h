@@ -20,6 +20,7 @@ struct TransactionData {
     std::tm transactionDate{};
     std::string currencyType = {};
     std::string toCurrencyType = {};
+    std::string feeAsset = {};
     long double amount{};
     long double toAmount{};
     long double nativeAmount{};
@@ -39,6 +40,7 @@ struct TransactionData {
         transactionStruct.transactionDate = transactionDate;
         transactionStruct.currencyType = currencyType;
         transactionStruct.toCurrencyType = toCurrencyType;
+        transactionStruct.feeAsset = feeAsset;
         transactionStruct.amount = amount;
         transactionStruct.toAmount = toAmount;
         transactionStruct.nativeAmount = nativeAmount;
@@ -86,6 +88,7 @@ struct TransactionData {
 
         addNode("currencyType", transaction.currencyType);
         addNode("toCurrencyType", transaction.toCurrencyType);
+        addNode("feeAsset", transaction.feeAsset);
         addNode("amount", std::to_string(transaction.amount));
         addNode("toAmount", std::to_string(transaction.toAmount));
         addNode("nativeAmount", std::to_string(transaction.nativeAmount));
@@ -147,6 +150,7 @@ struct TransactionData {
 
         currencyType = getTagValue("currencyType");
         toCurrencyType = getTagValue("toCurrencyType");
+        feeAsset = getTagValue("feeAsset");
         amount = std::stold(getTagValue("amount"));
         toAmount = std::stold(getTagValue("toAmount"));
         nativeAmount = std::stold(getTagValue("nativeAmount"));

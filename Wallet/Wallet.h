@@ -36,7 +36,8 @@ public:
     void removeTransaction(BaseTransaction &transaction);
 
     //! Return the transactions
-    std::vector<BaseTransaction> getTransactions();
+    //! Return the wallet transactions (copy)
+    std::vector<BaseTransaction> getTransactions() const;
 
     //! Set is outside wallet
     void setIsOutWallet(bool isOut);

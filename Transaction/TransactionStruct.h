@@ -17,6 +17,7 @@ struct TransactionStruct {
     std::tm transactionDate{};
     std::string currencyType = {};
     std::string toCurrencyType = {};
+    std::string feeAsset = {};
     long double amount{};
     long double toAmount{};
     long double nativeAmount{};

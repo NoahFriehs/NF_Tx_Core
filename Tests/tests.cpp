@@ -14,6 +14,7 @@
 #include <functional>
 #include <fstream>
 #include <iostream>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -95,6 +96,43 @@ static std::unique_ptr<TransactionManager> buildTmFromCdcLines(
     TransactionParser parser(lines);
     parser.parseFromCsv(Mode::CDC);
     tm->setTransactions(parser.getTransactions(), Mode::CDC);
+    tm->processTransactions();
+    return tm;
+}
+
+// BlockPit test helpers
+static std::string blockPitHeader() {
+    return "Date (UTC);Integration Name;Label;Outgoing Asset;Outgoing Amount;"
+           "Incoming Asset;Incoming Amount;Fee Asset (optional);Fee Amount (optional);"
+           "Comment (optional);Trx. ID (optional);Source Type;Source Name";
+}
+
+// BlockPit line: "DD.MM.YYYY HH:MM:SS;Integration Name;Label;OutAsset;OutAmount;"
+//               "InAsset;InAmount;FeeAsset;FeeAmount;Comment;TrxId;SourceType;SourceName"
+static std::string bpLine(const char *ts, const char *integration,
+                          const char *label, const char *outAsset,
+                          const char *outAmount, const char *inAsset,
+                          const char *inAmount, const char *feeAsset = "",
+                          const char *feeAmount = "", const char *comment = "",
+                          const char *trxId = "", const char *sourceType = "API",
+                          const char *sourceName = "Bitpanda") {
+    return std::string(ts) + ";" + integration + ";" + label + ";" + outAsset + ";" +
+           outAmount + ";" + inAsset + ";" + inAmount + ";" + feeAsset + ";" +
+           feeAmount + ";" + comment + ";" + trxId + ";" + sourceType + ";" + sourceName;
+}
+
+static BaseTransaction parseBlockPit(const std::string &line) {
+    BaseTransaction tx;
+    tx.parseBlockPit(line);
+    return tx;
+}
+
+static std::unique_ptr<TransactionManager> buildTmFromBlockPitLines(
+        const std::vector<std::string> &lines) {
+    auto tm = std::make_unique<TransactionManager>();
+    TransactionParser parser(lines);
+    parser.parseFromCsv(Mode::BlockPit);
+    tm->setTransactions(parser.getTransactions(), Mode::BlockPit);
     tm->processTransactions();
     return tm;
 }
@@ -741,6 +779,270 @@ static void testLegacyV2Migration() {
     std::filesystem::remove_all(dir);
 }
 
+static void testBlockPitParser() {
+    SECTION("BlockPit header detection");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda Depot", "Airdrop", "", "", "BTC", "0.5")};
+        TransactionParser parser(data);
+        parser.parseFromCsv(Mode::BlockPit);
+        CHECK(parser.getTransactions().size() == 1);
+    }
+
+    SECTION("Timestamp parsing");
+    {
+        auto tx = parseBlockPit("01.10.2026 21:30:23;Bitpanda;Airdrop;;;BTC;0.5");
+        CHECK(TimestampConverter::tmToString(tx.getTransactionData().transactionDate) == "2026-10-01 21:30:23");
+    }
+
+    SECTION("Airdrop parsing");
+    {
+        auto tx = parseBlockPit("01.10.2026 21:30:23;Bitpanda;Airdrop;;;BTC;0.50000");
+        CHECK(tx.getCurrencyType() == "BTC");
+        CHECK_NEAR(tx.getAmount(), 0.5, 1e-6);
+        CHECK(tx.getTransactionType() == crypto_airdrop_credited);
+        CHECK(tx.getTransactionTypeString() == "airdrop");
+    }
+
+    SECTION("Staking parsing");
+    {
+        auto tx = parseBlockPit("01.10.2026 21:30:23;Bitpanda;Staking;;;ETH;1.234");
+        CHECK(tx.getCurrencyType() == "ETH");
+        CHECK_NEAR(tx.getAmount(), 1.234, 1e-6);
+        CHECK(tx.getTransactionType() == crypto_earn_interest_paid);
+    }
+
+    SECTION("Trade (EUR -> BTC) parsing");
+    {
+        auto tx = parseBlockPit("01.10.2026 21:30:23;Bitpanda;Trade;EUR;499.99;BTC;0.00205761;EUR;0.99;Buy BTC;");
+        CHECK(tx.getCurrencyType() == "BTC");
+        CHECK_NEAR(tx.getAmount(), 0.00205761, 1e-8);
+        CHECK(tx.getToCurrencyType() == "EUR");
+        CHECK_NEAR(tx.getToAmount(), 499.99, 1e-6);
+        CHECK(tx.getTransactionType() == crypto_purchase);
+        CHECK_NEAR(tx.getFeeAmount(), 0.99, 1e-9);
+        CHECK(tx.getFeeAsset() == "EUR");
+    }
+
+    SECTION("Deposit parsing");
+    {
+        auto tx = parseBlockPit("01.10.2026 21:30:23;Kraken;Deposit;;;XRP;100.00");
+        CHECK(tx.getCurrencyType() == "XRP");
+        CHECK_NEAR(tx.getAmount(), 100.0, 1e-6);
+        CHECK(tx.getTransactionType() == crypto_deposit);
+    }
+
+    SECTION("Withdrawal parsing");
+    {
+        auto tx = parseBlockPit("01.10.2026 21:30:23;Kraken;Withdrawal;BTC;0.001;;;0");
+        CHECK(tx.getCurrencyType() == "BTC");
+        CHECK(tx.getTransactionType() == crypto_withdrawal);
+    }
+
+    SECTION("Fee handling");
+    {
+        auto tx = parseBlockPit("01.10.2026 21:30:23;Bitpanda;Trade;EUR;500;BTC;0.01;EUR;2.50;Trade;");
+        CHECK_NEAR(tx.getFeeAmount(), 2.50, 1e-6);
+        CHECK(tx.getFeeAsset() == "EUR");
+    }
+
+    SECTION("Empty optional fields");
+    {
+        auto tx = parseBlockPit("01.10.2026 21:30:23;Bitpanda;Interest;;;SOL;5.0");
+        CHECK(tx.getCurrencyType() == "SOL");
+        CHECK_NEAR(tx.getAmount(), 5.0, 1e-6);
+        CHECK(tx.getTransactionType() == crypto_earn_interest_paid);
+    }
+}
+
+static void testBlockPitManager() {
+    SECTION("BlockPit airdrop creates wallet and sets bonus");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda", "Airdrop", "", "", "BTC", "0.5")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK(tm->getWallets().count("BTC") == 1);
+        CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), 0.5, 1e-6);
+        // Airdrop should set amount to bonus
+        auto &wallet = tm->getWallets().at("BTC");
+        CHECK(wallet.getBonusBalance() > 0);
+    }
+
+    SECTION("BlockPit trade: crypto credited, fiat leaves the outside wallet");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda", "Trade", "EUR", "500", "BTC", "0.01")};
+        auto tm = buildTmFromBlockPitLines(data);
+        // BTC wallet is credited with the purchased quantity
+        CHECK(tm->getWallets().count("BTC") == 1);
+        CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), 0.01, 1e-9);
+        // The fiat cost is tracked on the crypto wallet (like the CDC parser)
+        CHECK_NEAR(tm->getWallets().at("BTC").getMoneySpent(), 500.0, 1e-9);
+        // The fiat side is an outside wallet, not a regular crypto wallet
+        CHECK(tm->getWallets().count("EUR") == 0);
+        CHECK(tm->getOutWallets().count("EUR") == 1);
+        CHECK_NEAR(tm->getOutWallets().at("EUR").getBalance(), -500.0, 1e-9);
+    }
+
+    SECTION("BlockPit withdrawal debits the asset wallet and credits outside");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Kraken", "Deposit", "", "", "BTC", "0.01"),
+                                      bpLine("02.10.2026 21:30:23", "Kraken", "Withdrawal", "BTC", "0.001", "", "")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), 0.009, 1e-9);
+        CHECK_NEAR(tm->getOutWallets().at("BTC").getBalance(), -0.009, 1e-9);
+    }
+
+    SECTION("BlockPit Non-Taxable Out debits instead of inflating the balance");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Kraken", "Non-Taxable In", "", "", "LTC", "0.01"),
+                                      bpLine("02.10.2026 21:30:23", "Kraken", "Non-Taxable Out", "LTC", "0.002", "", "")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK_NEAR(tm->getWallets().at("LTC").getBalance(), 0.008, 1e-9);
+    }
+
+    SECTION("BlockPit swap splits into credit and debit on both wallets");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda", "Trade", "DOGE", "10", "ETH", "0.5")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK_NEAR(tm->getWallets().at("ETH").getBalance(), 0.5, 1e-9);
+        CHECK_NEAR(tm->getWallets().at("DOGE").getBalance(), -10.0, 1e-9);
+        // Credit and debit are both stored, so both survive the save format
+        CHECK(tm->getWallets().at("ETH").getTransactions().size() == 1);
+        CHECK(tm->getWallets().at("DOGE").getTransactions().size() == 1);
+        auto dogeTxs = tm->getWallets().at("DOGE").getTransactions();
+        const auto &debit = dogeTxs.front();
+        CHECK_NEAR(debit.getAmount(), -10.0, 1e-9);
+        CHECK(debit.getCurrencyType() == "DOGE");
+    }
+
+    SECTION("BlockPit fee and lost labels debit the asset wallet");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda", "Interest", "", "", "KFEE", "100"),
+                                      bpLine("02.10.2026 21:30:23", "Bitpanda", "Fee", "KFEE", "28.51", "", "", "KFEE", "28.51"),
+                                      bpLine("03.10.2026 21:30:23", "Bitpanda", "Lost", "KFEE", "5", "", "")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK_NEAR(tm->getWallets().at("KFEE").getBalance(), 100 - 28.51 - 5, 1e-9);
+    }
+
+    SECTION("BlockPit: every transaction ends up in a wallet (no dangling ids)");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda", "Trade", "EUR", "500", "BTC", "0.01"),
+                                      bpLine("02.10.2026 21:30:23", "Bitpanda", "Trade", "DOGE", "10", "ETH", "0.5"),
+                                      bpLine("03.10.2026 21:30:23", "Kraken", "Withdrawal", "BTC", "0.001", "", ""),
+                                      bpLine("04.10.2026 21:30:23", "Kraken", "Lost", "DOGE", "1", "", ""),
+                                      bpLine("05.10.2026 21:30:23", "Bitpanda", "Mystery Label", "", "", "SOL", "2")};
+        auto tm = buildTmFromBlockPitLines(data);
+        const auto &wallets = tm->getWallets();
+        const auto &outside = tm->getOutWallets();
+        std::set<int> ids;
+        for (const auto &pair: wallets) ids.insert(pair.second.getWalletId());
+        for (const auto &pair: outside) ids.insert(pair.second.getWalletId());
+        for (const auto &tx: tm->getTransactions()) {
+            CHECK(ids.count(tx.getWalletId()) == 1);
+        }
+    }
+
+    SECTION("BlockPit: types survive a save/load round trip");
+    {
+        const std::string dir =
+                (std::filesystem::temp_directory_path() / "nf_tx_core_tests").string() + "/bp_roundtrip/";
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda", "Airdrop", "", "", "BTC", "0.5"),
+                                      bpLine("02.10.2026 21:30:23", "Kraken", "Non-Taxable In", "", "", "LTC", "1")};
+        auto tm = buildTmFromBlockPitLines(data);
+        tm->saveData(dir);
+        TransactionManager restored;
+        restored.loadData(dir);
+        TransactionType first = NONE, second = NONE;
+        for (const auto &tx: restored.getTransactions()) {
+            if (tx.getCurrencyType() == "BTC") first = tx.getTransactionType();
+            if (tx.getCurrencyType() == "LTC") second = tx.getTransactionType();
+        }
+        CHECK(first == crypto_airdrop_credited);
+        CHECK(second == crypto_transfer);
+        std::filesystem::remove_all(dir);
+    }
+
+    SECTION("BlockPit interest creates wallet");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda", "Interest", "", "", "ETH", "1.5")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK(tm->getWallets().count("ETH") == 1);
+        CHECK_NEAR(tm->getWallets().at("ETH").getBalance(), 1.5, 1e-6);
+    }
+
+    SECTION("Multiple transaction types");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda", "Airdrop", "", "", "BTC", "0.5"),
+                                      bpLine("02.10.2026 21:30:23", "Bitpanda", "Interest", "", "", "ETH", "1.5"),
+                                      bpLine("03.10.2026 21:30:23", "Kraken", "Deposit", "", "", "XRP", "100")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK(tm->getWallets().count("BTC") == 1);
+        CHECK(tm->getWallets().count("ETH") == 1);
+        CHECK(tm->getWallets().count("XRP") == 1);
+        CHECK(tm->getTransactions().size() == 3);
+    }
+}
+
+static void testBlockPitTimestampParsing() {
+    SECTION("DD.MM.YYYY HH:MM:SS format");
+    {
+        auto tm1 = TimestampConverter::stringToTmBlockPit("01.12.2023 10:30:45");
+        CHECK(tm1.tm_mday == 1);
+        CHECK(tm1.tm_mon == 11);  // 0-indexed (December = 11)
+        CHECK(tm1.tm_year == 123); // 0-indexed (2023 - 1900 = 123)
+        CHECK(tm1.tm_hour == 10);
+        CHECK(tm1.tm_min == 30);
+        CHECK(tm1.tm_sec == 45);
+    }
+
+    SECTION("Edge: single digit day/month");
+    {
+        auto tm1 = TimestampConverter::stringToTmBlockPit("1.5.2023 09:00:00");
+        CHECK(tm1.tm_mday == 1);
+        CHECK(tm1.tm_mon == 4);   // May
+        CHECK(tm1.tm_year == 123);
+    }
+
+    SECTION("Empty string throws");
+    {
+        checkThrows([] { (void) TimestampConverter::stringToTmBlockPit(""); });
+    }
+}
+
+static void testCdcWalletSignRegression() {
+    // Pins the signed-amount convention of the CDC/Kraken modes: CSV amounts
+    // are signed, wallets always apply them with addTransaction.
+    SECTION("CDC withdrawal debits the asset wallet, credits outside");
+    {
+        std::vector<std::string> data{CDC_HEADER,
+                                      cdcLine("2023-04-01 12:34:56", "BTC", "-1", "-100", "crypto_withdrawal")};
+        auto tm = buildTmFromCdcLines(data);
+        CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), -1.0, 1e-9);
+        CHECK_NEAR(tm->getOutWallets().at("BTC").getBalance(), 1.0, 1e-9);
+        CHECK_NEAR(tm->getWallets().at("BTC").getMoneySpent(), -100.0, 1e-9);
+    }
+
+    SECTION("CDC swap debited is applied as a plain addition of the signed amount");
+    {
+        std::vector<std::string> data{CDC_HEADER,
+                                      cdcLine("2023-04-01 12:34:56", "ETH", "-2", "-200", "crypto_wallet_swap_debited")};
+        auto tm = buildTmFromCdcLines(data);
+        CHECK_NEAR(tm->getWallets().at("ETH").getBalance(), -2.0, 1e-9);
+        CHECK_NEAR(tm->getWallets().at("ETH").getBonusBalance(), -2.0, 1e-9);
+    }
+}
+
 static void testPriceCache() {
     SECTION("PriceCache replaces entries (regression: stale prices)");
     PriceCache cache;
@@ -812,6 +1114,7 @@ int main() {
     testSplitCsvLine();
     testStringToCharArray();
     testTimestampConverter();
+    testBlockPitTimestampParsing();
     testParserHeaders();
     testParserRobustness();
     testParserModes();
@@ -819,6 +1122,9 @@ int main() {
     testIdCounters();
     testManagerStates();
     testReferencedQuietWalletKept();
+    testBlockPitParser();
+    testBlockPitManager();
+    testCdcWalletSignRegression();
     testManagerRoundTrip();
     testBinaryUtil();
     testUnlimitedPersistence();

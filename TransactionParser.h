@@ -37,6 +37,8 @@ private:
     void parseCard();
 
     void parseKraken();
+
+    void parseBlockPit();
 };
 
 

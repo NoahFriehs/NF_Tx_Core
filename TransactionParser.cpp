@@ -41,6 +41,9 @@ void TransactionParser::parseFromCsv(Mode mode) {
         case Kraken:
             parseKraken();
             break;
+        case BlockPit:
+            parseBlockPit();
+            break;
         case Custom:
             throw std::invalid_argument("Custom mode not implemented");
         case Default:
@@ -125,6 +128,40 @@ void TransactionParser::parseKraken() {
         BaseTransaction transaction;
         try {
             transaction.parseKraken(cleanCsvLine(item));
+            transactions.push_back(transaction);
+        } catch (const std::exception &e) {
+            // Skip the broken line, continue with the rest (same behavior
+            // as the Kotlin core's amountTxFailed counter).
+            failedLines++;
+            FileLog::w("TransactionParser",
+                       "Skipping unparsable line: " + std::string(e.what()));
+        }
+    }
+
+    FileLog::i("TransactionParser",
+               "Parsed " + std::to_string(transactions.size()) + " transactions" +
+                       (failedLines > 0
+                            ? ", " + std::to_string(failedLines) + " line(s) failed"
+                            : ""));
+
+    data.clear();
+    hasData = false;
+}
+
+void TransactionParser::parseBlockPit() {
+    // BlockPit header detection
+    constexpr const char *BLOCKPIT_HEADER = "Date (UTC);Integration Name;Label;Outgoing Asset;Outgoing Amount;"
+            "Incoming Asset;Incoming Amount;Fee Asset (optional);Fee Amount (optional);"
+            "Comment (optional);Trx. ID (optional);Source Type;Source Name";
+    if (BLOCKPIT_HEADER == cleanCsvLine(data[0]) ||
+        cleanCsvLine(data[0]).find("Date (UTC)") != std::string::npos) {
+        data.erase(data.begin());   // remove header row, if needed
+    }
+
+    for (const auto &item: data) {
+        BaseTransaction transaction;
+        try {
+            transaction.parseBlockPit(cleanCsvLine(item));
             transactions.push_back(transaction);
         } catch (const std::exception &e) {
             // Skip the broken line, continue with the rest (same behavior

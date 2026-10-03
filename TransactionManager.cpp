@@ -93,7 +93,13 @@ void TransactionManager::createCardWallets() {
 }
 
 void TransactionManager::addTransactionsToWallets() {
-    if (hasTxData) addCDCTransactionsToWallets();
+    if (hasTxData) {
+        if (currentMode == Mode::BlockPit) {
+            addBlockPitTransactionsToWallets();
+        } else {
+            addCDCTransactionsToWallets();
+        }
+    }
 
     if (hasCardTxData) addCardTransactionsToWallets();
 }
@@ -140,6 +146,9 @@ void TransactionManager::addCDCTransactionsToWallets() {
             case card_cashback_reverted:
             case admin_wallet_credited:
             case crypto_wallet_swap_credited:
+                tx.setAmountToAmountBonus();
+                wallet->addTransaction(tx, false);
+                break;
             case crypto_wallet_swap_debited:
                 tx.setAmountToAmountBonus();
                 wallet->addTransaction(tx, false);
@@ -171,6 +180,123 @@ void TransactionManager::addCDCTransactionsToWallets() {
                 throw std::invalid_argument("Transaction type is NONE");
         }
 
+    }
+}
+
+void TransactionManager::addBlockPitTransactionsToWallets() {
+    // Amounts are signed (see BaseTransaction::parseBlockPit): positive values
+    // credit, negative values debit the wallet that owns the asset.
+    for (auto &tx: transactions) {
+        // Splits a crypto-to-crypto swap into a credit on the incoming asset's
+        // wallet and a matching debit on the outgoing asset's wallet.
+        auto addSwap = [this](BaseTransaction &tx) {
+            auto *inWallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
+            auto *outWallet = &getOrCreateWallet(wallets, tx.getToCurrencyType());
+            tx.setWalletId(inWallet->getWalletId());
+            tx.setFromWalletId(outWallet->getWalletId());
+            inWallet->addTransaction(tx, false);
+            BaseTransaction debit = tx;   // stored copy for the outgoing wallet
+            debit.setTransactionTypeString("Swap (debit)");
+            debit.setCurrencyType(tx.getToCurrencyType());
+            debit.setAmount(-tx.getToAmount());
+            debit.setToAmount(0);
+            outWallet->addTransaction(debit, false);   // sets debit.walletId
+        };
+
+        switch (tx.getTransactionType()) {
+            case crypto_purchase: {
+                // Fiat → crypto purchase: mirrors the CDC purchase accounting.
+                auto *cryptoWallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
+                tx.setWalletId(cryptoWallet->getWalletId());
+                tx.setFromWalletId(cryptoWallet->getWalletId());
+                cryptoWallet->addTransaction(tx, false);
+                if (!tx.getToCurrencyType().empty() && tx.getToAmount() > 0) {
+                    // The fiat side leaves the outside wallet (like CDC)
+                    BaseTransaction fiatTx = tx;
+                    fiatTx.setAmount(tx.getToAmount());
+                    fiatTx.setNativeAmount(tx.getToAmount());
+                    getOrCreateWallet(outWallets, tx.getToCurrencyType()).withdraw(fiatTx);
+                }
+                break;
+            }
+
+            case crypto_withdrawal: {
+                // Signed negative amount: debits the asset wallet, credits outside
+                auto *wallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
+                tx.setWalletId(wallet->getWalletId());
+                tx.setFromWalletId(wallet->getWalletId());
+                wallet->addTransaction(tx, false);
+                getOrCreateWallet(outWallets, tx.getCurrencyType()).withdraw(tx);
+                break;
+            }
+
+            case crypto_deposit: {
+                // Incoming: credits the asset wallet, debits outside
+                auto *wallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
+                tx.setWalletId(wallet->getWalletId());
+                tx.setFromWalletId(wallet->getWalletId());
+                wallet->addTransaction(tx, false);
+                getOrCreateWallet(outWallets, tx.getCurrencyType()).withdraw(tx);
+                break;
+            }
+
+            case crypto_transfer: {
+                // Non-Taxable In (credited) / Non-Taxable Out (debited) — the
+                // sign in amount already encodes the direction.
+                auto *wallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
+                tx.setWalletId(wallet->getWalletId());
+                tx.setFromWalletId(wallet->getWalletId());
+                wallet->addTransaction(tx, false);
+                break;
+            }
+
+            case crypto_earn_interest_paid: {
+                // Interest/Staking: incoming credit
+                auto *wallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
+                tx.setWalletId(wallet->getWalletId());
+                tx.setFromWalletId(wallet->getWalletId());
+                wallet->addTransaction(tx, false);
+                break;
+            }
+
+            case crypto_airdrop_credited:
+            case crypto_bounty_credited:
+            case crypto_gift_received: {
+                // Rewarded into the incoming asset as bonus
+                auto *wallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
+                tx.setWalletId(wallet->getWalletId());
+                tx.setFromWalletId(wallet->getWalletId());
+                tx.setAmountToAmountBonus();
+                wallet->addTransaction(tx, false);
+                break;
+            }
+
+            case STRING: {
+                // Swaps and unknown labels. Every transaction must end up in a
+                // wallet, otherwise removeEmptyWallets() leaves it dangling.
+                if (!tx.getToCurrencyType().empty() && tx.getToAmount() > 0) {
+                    addSwap(tx);
+                } else if (!tx.getCurrencyType().empty()) {
+                    auto *wallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
+                    tx.setWalletId(wallet->getWalletId());
+                    tx.setFromWalletId(wallet->getWalletId());
+                    wallet->addTransaction(tx, false);
+                } else {
+                    FileLog::w("TransactionManager",
+                               "BlockPit line without usable asset: " + tx.getTransactionTypeString());
+                }
+                break;
+            }
+
+            case NONE:
+                FileLog::e("TransactionManager", "Transaction type is NONE");
+                throw std::invalid_argument("Transaction type is NONE");
+
+            default:
+                FileLog::w("TransactionManager",
+                           "Unhandled BlockPit type: " + tx.getTransactionTypeString());
+                break;
+        }
     }
 }
 
@@ -248,21 +374,17 @@ void TransactionManager::calculateWalletBalances() {
     cardWalletsBalance.reset();
     checkTransactionManagerState();
     if (hasTxData)
-        for (auto &wallet: wallets) {
-
-            //if (wallet.second.getCurrencyType() == "EUR") continue;
-
+        for (auto &walletRef: wallets) {
             auto walletBalance = std::make_unique<WalletBalance>();
-            walletBalance->fillFromWallet(&wallet.second);
-            if (walletBalance->nativeBalance == 0 && walletBalance->balance != 0 || true) {
-                walletBalance->nativeBalance =
-                        assetValue.getPrice(walletBalance->currencyType) * walletBalance->balance;
-                walletBalance->nativeBonusBalance =
-                        assetValue.getPrice(walletBalance->currencyType) *
-                        walletBalance->bonusBalance;
-            }
+            walletBalance->fillFromWallet(&walletRef.second);
+            long double nativeBal = walletBalance->balance *
+                    assetValue.getPrice(walletBalance->currencyType);
+            walletBalance->nativeBalance = nativeBal;
+            walletBalance->nativeBonusBalance =
+                    assetValue.getPrice(walletBalance->currencyType) *
+                    walletBalance->bonusBalance;
             walletBalanceMap.insert(
-                    std::pair<std::string, WalletBalance>(wallet.first, *walletBalance));
+                    std::pair<std::string, WalletBalance>(walletRef.first, *walletBalance));
         }
     walletsBalance.fillFromWalletBalanceMap(walletBalanceMap);
 
@@ -362,9 +484,12 @@ void TransactionManager::setTransactions(std::vector<BaseTransaction> &transacti
     std::lock_guard<std::mutex> lock(mutex);
     if (transactions_.empty()) throw std::invalid_argument("Transactions is empty");
 
+    currentMode = mode;
     switch (mode) {
         case CDC:
         case Kraken:
+        case BlockPit:
+        case Default:
             transactions = transactions_;
             hasTxData = true;
             break;
@@ -374,10 +499,6 @@ void TransactionManager::setTransactions(std::vector<BaseTransaction> &transacti
             break;
         case Custom:
             throw std::invalid_argument("Custom mode not implemented");
-        case Default:
-            transactions = transactions_;
-            hasTxData = true;
-            break;
     }
 }
 

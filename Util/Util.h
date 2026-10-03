@@ -24,8 +24,11 @@ std::vector<std::string> splitCsvLine(const std::string &input, char delimiter);
 
 class TimestampConverter {
 public:
-    //! Convert a string to a tm struct
+    //! Convert a string to a tm struct (YYYY-MM-DD HH:MM:SS)
     static std::tm stringToTm(const std::string &timestamp_str);
+
+    //! Convert a string to a tm struct (DD.MM.YYYY HH:MM:SS for BlockPit)
+    static std::tm stringToTmBlockPit(const std::string &timestamp_str);
 
     //! Convert a tm struct to a string
     static std::string tmToString(const std::tm &timestamp_tm);

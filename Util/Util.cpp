@@ -20,6 +20,7 @@ TransactionType ttConverter(const std::string &s) {
     if (lowercase == "lockup_lock") return lockup_lock;
     if (lowercase == "crypto_withdrawal") return crypto_withdrawal;
     if (lowercase == "crypto_deposit") return crypto_deposit;
+    if (lowercase == "crypto_transfer") return crypto_transfer;
     if (lowercase == "referral_card_cashback") return referral_card_cashback;
     if (lowercase == "reimbursement") return reimbursement;
     if (lowercase == "card_cashback_reverted") return card_cashback_reverted;
@@ -30,6 +31,9 @@ TransactionType ttConverter(const std::string &s) {
     if (lowercase == "dust_conversion_credited") return dust_conversion_credited;
     if (lowercase == "dust_conversion_debited") return dust_conversion_debited;
     if (lowercase == "crypto_viban_exchange") return crypto_viban_exchange;
+    if (lowercase == "airdrop") return crypto_airdrop_credited;
+    if (lowercase == "bounty" || lowercase == "cashback") return crypto_bounty_credited;
+    if (lowercase == "gift received") return crypto_gift_received;
 
     return STRING;
 }
@@ -99,6 +103,20 @@ std::tm TimestampConverter::stringToTm(const std::string &timestamp_str) {
     ss >> std::get_time(&timestamp_tm, "%Y-%m-%d %H:%M:%S");
     if (ss.fail()) {
         throw std::runtime_error("Failed to parse timestamp.");
+    }
+    return timestamp_tm;
+}
+
+std::tm TimestampConverter::stringToTmBlockPit(const std::string &timestamp_str) {
+    std::tm timestamp_tm = {};
+    if (timestamp_str.empty()) {
+        FileLog::w("TimestampConverter", "Empty timestamp string.");
+        throw std::runtime_error("Empty timestamp string.");
+    }
+    std::istringstream ss(timestamp_str);
+    ss >> std::get_time(&timestamp_tm, "%d.%m.%Y %H:%M:%S");
+    if (ss.fail()) {
+        throw std::runtime_error("Failed to parse BlockPit timestamp.");
     }
     return timestamp_tm;
 }

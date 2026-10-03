@@ -15,6 +15,7 @@ enum TransactionType {
     lockup_lock,
     crypto_withdrawal,
     crypto_deposit,
+    crypto_transfer,
     referral_card_cashback,
     reimbursement,
     card_cashback_reverted,
@@ -25,6 +26,9 @@ enum TransactionType {
     dust_conversion_credited,
     dust_conversion_debited,
     crypto_viban_exchange,
+    crypto_airdrop_credited,
+    crypto_bounty_credited,
+    crypto_gift_received,
     STRING, //for Card and unknown things
     NONE
 };
@@ -35,7 +39,8 @@ enum Mode {
     Card,
     Default,
     Custom,
-    Kraken
+    Kraken,
+    BlockPit
 };
 
 

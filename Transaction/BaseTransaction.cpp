@@ -46,12 +46,28 @@ long double BaseTransaction::getNativeAmount() const {
     return nativeAmount;
 }
 
-TransactionType BaseTransaction::getTransactionType() {
+TransactionType BaseTransaction::getTransactionType() const {
     return transactionType;
 }
 
 void BaseTransaction::setAmountToAmountBonus() {
     amountBonus = amount;
+}
+
+void BaseTransaction::setAmount(long double amount_) {
+    amount = amount_;
+}
+
+void BaseTransaction::setNativeAmount(long double nativeAmount_) {
+    nativeAmount = nativeAmount_;
+}
+
+void BaseTransaction::setCurrencyType(const std::string &currencyType_) {
+    currencyType = currencyType_;
+}
+
+void BaseTransaction::setToAmount(long double toAmount_) {
+    toAmount = toAmount_;
 }
 
 void BaseTransaction::setWalletId(int id) {
@@ -62,7 +78,7 @@ void BaseTransaction::setFromWalletId(int id) {
     fromWalletId = id;
 }
 
-std::string BaseTransaction::getToCurrencyType() {
+std::string BaseTransaction::getToCurrencyType() const {
     return toCurrencyType;
 }
 
@@ -76,6 +92,14 @@ int BaseTransaction::getWalletId() const {
 
 long double BaseTransaction::getAmountBonus() const {
     return amountBonus;
+}
+
+long double BaseTransaction::getFeeAmount() const {
+    return feeAmount;
+}
+
+std::string BaseTransaction::getFeeAsset() const {
+    return feeAsset;
 }
 
 long double BaseTransaction::getToAmount() const {
@@ -131,6 +155,7 @@ TransactionStruct BaseTransaction::getTransactionStruct() {
     data.transactionDate = transactionDate;
     data.currencyType = currencyType;
     data.toCurrencyType = toCurrencyType;
+    data.feeAsset = feeAsset;
     data.amount = amount;
     data.toAmount = toAmount;
     data.nativeAmount = nativeAmount;
@@ -151,6 +176,7 @@ void BaseTransaction::fromTransactionStruct(const TransactionStruct &data) {
     transactionDate = data.transactionDate;
     currencyType = data.currencyType;
     toCurrencyType = data.toCurrencyType;
+    feeAsset = data.feeAsset;
     amount = data.amount;
     toAmount = data.toAmount;
     nativeAmount = data.nativeAmount;
@@ -192,6 +218,7 @@ void BaseTransaction::setTransactionData(const TransactionStruct &txStruct) {
     transactionDate = txStruct.transactionDate;
     currencyType = txStruct.currencyType;
     toCurrencyType = txStruct.toCurrencyType;
+    feeAsset = txStruct.feeAsset;
     amount = txStruct.amount;
     toAmount = txStruct.toAmount;
     nativeAmount = txStruct.nativeAmount;
@@ -235,4 +262,182 @@ void BaseTransaction::parseKraken(const std::string &txString) {
     }
     feeAmount = std::stold(tx[8]);
 
+}
+
+void BaseTransaction::parseBlockPit(const std::string &txString) {
+    // BlockPit CSV uses semicolons as delimiter with this format:
+    // Date (UTC);Integration Name;Label;Outgoing Asset;Outgoing Amount;
+    // Incoming Asset;Incoming Amount;Fee Asset (optional);Fee Amount (optional);
+    // Comment (optional);Trx. ID (optional);Source Type;Source Name
+    auto tx = splitCsvLine(txString, ';');
+
+    // Guard the unbounded column accesses below (operator[] does not check).
+    if (tx.size() < 7) {
+        throw std::invalid_argument(
+                "BlockPit line needs at least 7 columns, got " + std::to_string(tx.size()));
+    }
+    transactionId = txIdCounter++;
+    transactionDate = TimestampConverter::stringToTmBlockPit(tx[0]);
+    description = tx[1];   // Integration Name
+
+    // Column 2: Label → determines transaction type
+    std::string label = tx[2];
+
+    // Columns 3-4: Outgoing (what leaves the wallet)
+    std::string outgoingAsset = tx[3];
+    std::string outgoingAmountStr = tx[4];
+
+    // Columns 5-6: Incoming (what arrives in the wallet)
+    std::string incomingAsset = tx[5];
+    std::string incomingAmountStr = tx[6];
+
+    // Column 7: Fee Asset (optional)
+    std::string incomingFeeAsset = tx.size() > 7 ? tx[7] : "";
+    // Column 8: Fee Amount (optional)
+    std::string incomingFeeAmountStr = tx.size() > 8 ? tx[8] : "";
+    // Column 9: Comment (optional)
+    std::string comment = tx.size() > 9 ? tx[9] : "";
+    // Column 10: Transaction ID (optional)
+    transactionHash = tx.size() > 10 ? tx[10] : "";
+    // Column 12: Source Name (optional) — stored in notes
+    std::string sourceName = tx.size() > 12 ? tx[12] : "";
+
+    // Store metadata in notes
+    notes = "Source: " + sourceName;
+    if (!comment.empty()) {
+        notes += " | Comment: " + comment;
+    }
+
+    // Parse fee fields
+    if (!incomingFeeAsset.empty()) {
+        feeAsset = incomingFeeAsset;
+    }
+    if (!incomingFeeAmountStr.empty()) {
+        feeAmount = std::stold(incomingFeeAmountStr);
+    }
+
+    // Signed-amount convention (same as the CDC/Kraken parsers): a positive
+    // amount increases the owning wallet's balance, a negative amount reduces
+    // it. BlockPit reports absolute values, so outgoing quantities are stored
+    // negated. Wallets are never mutated here — only amounts are prepared.
+    auto toAmountValue = [](const std::string &s) -> long double {
+        return s.empty() ? 0.0L : std::stold(s);
+    };
+
+    // Determine transaction type based on Label
+    if (label == "Interest" || label == "Staking") {
+        transactionTypeString = "crypto_earn_interest_paid";
+        transactionType = crypto_earn_interest_paid;
+        // Only incoming — wallet is the incoming asset
+        currencyType = incomingAsset;
+        amount = toAmountValue(incomingAmountStr);
+    } else if (label == "Airdrop") {
+        transactionTypeString = "airdrop";
+        transactionType = crypto_airdrop_credited;
+        currencyType = incomingAsset;
+        amount = toAmountValue(incomingAmountStr);
+    } else if (label == "Deposit") {
+        transactionTypeString = "crypto_deposit";
+        transactionType = crypto_deposit;
+        currencyType = incomingAsset;
+        amount = toAmountValue(incomingAmountStr);
+    } else if (label == "Non-Taxable In") {
+        transactionTypeString = "crypto_transfer";
+        transactionType = crypto_transfer;
+        currencyType = incomingAsset;
+        amount = toAmountValue(incomingAmountStr);
+    } else if (label == "Withdrawal") {
+        transactionTypeString = "crypto_withdrawal";
+        transactionType = crypto_withdrawal;
+        // Only outgoing — wallet is the outgoing asset, amount is negative
+        currencyType = outgoingAsset;
+        amount = -toAmountValue(outgoingAmountStr);
+    } else if (label == "Trade") {
+        bool hasOutgoing = !outgoingAsset.empty() && !outgoingAmountStr.empty();
+        bool hasIncoming = !incomingAsset.empty() && !incomingAmountStr.empty();
+
+        if (hasOutgoing && hasIncoming) {
+            if (isFiatCurrency(outgoingAsset)) {
+                // Classic purchase: currencyType = incoming crypto, amount = +qty.
+                // nativeAmount = fiat cost, so the crypto wallet's moneySpent is
+                // tracked exactly like in the CDC parser.
+                currencyType = incomingAsset;
+                amount = toAmountValue(incomingAmountStr);
+                toCurrencyType = outgoingAsset;
+                toAmount = toAmountValue(outgoingAmountStr);
+                nativeAmount = toAmount;
+                transactionTypeString = "crypto_purchase";
+                transactionType = crypto_purchase;
+            } else {
+                // Crypto-to-crypto swap: +incoming here, -outgoing is applied by
+                // the manager to the outgoing asset's wallet.
+                currencyType = incomingAsset;
+                amount = toAmountValue(incomingAmountStr);
+                toCurrencyType = outgoingAsset;
+                toAmount = toAmountValue(outgoingAmountStr);
+                transactionTypeString = "Swap";
+                transactionType = STRING;
+            }
+        } else if (hasIncoming) {
+            // Degenerate Trade (incoming only) — plain credit
+            currencyType = incomingAsset;
+            amount = toAmountValue(incomingAmountStr);
+            transactionTypeString = "Transfer In";
+            transactionType = STRING;
+        } else if (hasOutgoing) {
+            // Degenerate Trade (outgoing only) — plain debit
+            currencyType = outgoingAsset;
+            amount = -toAmountValue(outgoingAmountStr);
+            transactionTypeString = "Transfer Out";
+            transactionType = STRING;
+        }
+    } else if (label == "Bounty" || label == "Cashback") {
+        transactionTypeString = "bounty";
+        transactionType = crypto_bounty_credited;
+        currencyType = incomingAsset;
+        amount = toAmountValue(incomingAmountStr);
+    } else if (label == "Gift Received") {
+        transactionTypeString = "gift received";
+        transactionType = crypto_gift_received;
+        currencyType = incomingAsset;
+        amount = toAmountValue(incomingAmountStr);
+    } else if (label == "Fee" || label == "Lost" || label == "Non-Taxable Out") {
+        // Outgoing-only labels — the owning wallet's balance is reduced
+        if (label == "Non-Taxable Out") {
+            transactionTypeString = "crypto_transfer";
+            transactionType = crypto_transfer;
+        } else {
+            transactionTypeString = label;
+            transactionType = STRING;
+        }
+        currencyType = outgoingAsset;
+        amount = -toAmountValue(outgoingAmountStr);
+    } else {
+        // Unknown label — fall back to STRING and route the amount by direction
+        transactionTypeString = label;
+        transactionType = STRING;
+        if (!outgoingAsset.empty()) {
+            currencyType = outgoingAsset;
+            amount = -toAmountValue(outgoingAmountStr);
+        } else if (!incomingAsset.empty()) {
+            currencyType = incomingAsset;
+            amount = toAmountValue(incomingAmountStr);
+        }
+    }
+
+    // Handle edge cases where currencyType ended up empty
+    if (currencyType.empty() && !incomingAsset.empty()) {
+        currencyType = incomingAsset;
+    }
+}
+
+//! Check if a currency string represents a fiat currency (EUR, USD, etc.)
+bool BaseTransaction::isFiatCurrency(const std::string &currency) {
+    static const std::vector<std::string> fiatCurrencies = {
+        "EUR", "USD", "GBP", "CHF", "JPY", "CNY", "CAD", "AUD", "NZD"
+    };
+    for (const auto &fiat: fiatCurrencies) {
+        if (currency == fiat) return true;
+    }
+    return false;
 }
