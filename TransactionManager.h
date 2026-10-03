@@ -81,6 +81,9 @@ public:
     //! Return all the wallets (internal storage, see getTransactions())
     const std::map<std::string, Wallet> & getWallets();
 
+    //! Return the outside wallets (see getWallets())
+    const std::map<std::string, Wallet> & getOutWallets();
+
     //! Return all the card wallets (internal storage, see getTransactions())
     const std::map<std::string, Wallet> & getCardWallets();
 

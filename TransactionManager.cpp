@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <unordered_set>
 #include "TransactionManager.h"
 #include "FileLog.h"
 #include "BinaryUtil.h"
@@ -184,16 +185,38 @@ void TransactionManager::vibianPurchase(BaseTransaction &tx) {
 }
 
 void TransactionManager::removeEmptyWallets() {
+    // A wallet whose own transaction list is empty is only removable when
+    // no stored transaction references its id - transactions may carry a
+    // walletId of a wallet they were never added to (e.g. special type
+    // handling in addCDCTransactionsToWallets), and consumers of the data
+    // (Room, the save format) require the referenced wallets to exist.
+    // Wallet ids come from one forward-only counter, so they are unique
+    // across all three maps and can be collected in a single set.
+    std::unordered_set<int> referencedIds;
+    for (const auto &tx: transactions) referencedIds.insert(tx.getWalletId());
+    for (const auto &tx: cardTransactions) referencedIds.insert(tx.getWalletId());
+
     for (auto it = wallets.begin(); it != wallets.end();) {
-        if (it->second.getTransactions().empty()) {
+        auto &wallet = it->second;
+        if (wallet.getTransactions().empty() && !referencedIds.count(wallet.getWalletId())) {
             it = wallets.erase(it);
         } else {
             ++it;
         }
     }
     for (auto it = outWallets.begin(); it != outWallets.end();) {
-        if (it->second.getTransactions().empty()) {
+        auto &wallet = it->second;
+        if (wallet.getTransactions().empty() && !referencedIds.count(wallet.getWalletId())) {
             it = outWallets.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    for (auto it = cardWallets.begin(); it != cardWallets.end();) {
+        auto &wallet = it->second;
+        if (wallet.getTransactions().empty()
+            && !referencedIds.count(wallet.getWalletId())) {
+            it = cardWallets.erase(it);
         } else {
             ++it;
         }
@@ -301,6 +324,10 @@ double TransactionManager::getValueOfAssets(int walletId) {
 
 const std::map<std::string, Wallet> & TransactionManager::getWallets() {
     return wallets;
+}
+
+const std::map<std::string, Wallet> & TransactionManager::getOutWallets() {
+    return outWallets;
 }
 
 double TransactionManager::getTotalBonus(int walletId) {

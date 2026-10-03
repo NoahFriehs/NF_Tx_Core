@@ -787,6 +787,22 @@ static void testFileLogLevels() {
     CHECK(true);
 }
 
+static void testReferencedQuietWalletKept() {
+    // supercharger_deposit is a type that addCDCTransactionsToWallets
+    // deliberately does not add to the wallet's own list. The stored
+    // transaction still references that wallet, so removeEmptyWallets must
+    // keep it - otherwise the id dangles (Room FK violation, broken saves).
+    auto tm = buildTmFromCdcLines(
+        {cdcLine("2023-05-01 12:00:00", "SC", "0.5", "5.0", "supercharger_deposit")});
+    int wid = -1;
+    for (const auto &entry: tm->getWallets()) {
+        if (entry.second.getCurrencyType() == "SC") wid = entry.second.getWalletId();
+    }
+    CHECK(wid != -1);
+    CHECK(!tm->getTransactions().empty()
+          && tm->getTransactions().front().getWalletId() == wid);
+}
+
 // ------------------------------------------------------------------ main ---
 
 int main() {
@@ -802,6 +818,7 @@ int main() {
     testWalletSemantics();
     testIdCounters();
     testManagerStates();
+    testReferencedQuietWalletKept();
     testManagerRoundTrip();
     testBinaryUtil();
     testUnlimitedPersistence();
