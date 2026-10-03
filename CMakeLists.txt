@@ -14,7 +14,6 @@ set(NF_TX_CORE_SOURCES
         Price/PriceCache.cpp
         Transaction/BaseTransaction.cpp
         TransactionManager.cpp
-        TransactionManager/TMState.cpp
         TransactionParser.cpp
         Util/Util.cpp
         Util/CharUtil.cpp

@@ -5,13 +5,6 @@
 #include "TransactionManager.h"
 #include "FileLog.h"
 #include "BinaryUtil.h"
-#include "TransactionManager/TMState.h"
-#include "Util/CharUtil.h"
-
-using BinaryUtil::deserializeStruct;
-using BinaryUtil::deserializeVector;
-using BinaryUtil::serializeStruct;
-using BinaryUtil::serializeVector;
 
 
 TransactionManager::TransactionManager() = default;
@@ -452,73 +445,60 @@ Wallet *TransactionManager::getWallet(int walletId) {
 
 void TransactionManager::saveData(const std::string &dirPath) {
     std::lock_guard<std::mutex> lock(mutex);
-    FileLog::i("TransactionManager", "Saving data");
-    std::vector<WalletStruct> walletStructVector;
-    std::vector<WalletStruct> cardWalletStructVector;
-    std::vector<CWalletStruct> cWalletStructVector;
-    std::vector<CWalletStruct> cCardWalletStructVector;
+    FileLog::i("TransactionManager", "Saving data to dir: " + dirPath);
 
+    std::vector<WalletStruct> walletStructVector;
     for (auto &[name, wallet]: wallets) {
         walletStructVector.push_back(*wallet.getWalletStruct());
     }
     for (auto &[name, wallet]: outWallets) {
         walletStructVector.push_back(*wallet.getWalletStruct());
     }
+    std::vector<WalletStruct> cardWalletStructVector;
     for (auto &[name, wallet]: cardWallets) {
         cardWalletStructVector.push_back(*wallet.getWalletStruct());
     }
 
-    auto state = getTransactionManagerState();
+    const auto state = getTransactionManagerState();
 
-    FileLog::i("TransactionManager", "Saving data to dir: " + dirPath);
-
-    size_t walletsSize = walletStructVector.size();
-    size_t cardWalletsSize = cardWalletStructVector.size();
-
-    for (size_t i = 0; i < walletsSize; i++) {
-        cWalletStructVector.push_back(CWalletStruct::convertToCWalletStruct(walletStructVector[i]));
+    if (!BinaryUtil::writeWalletStore(dirPath + "wallets", walletStructVector) ||
+        !BinaryUtil::writeWalletStore(dirPath + "cardWallets", cardWalletStructVector) ||
+        !BinaryUtil::writeStateFile(dirPath + "state", state)) {
+        FileLog::e("TransactionManager", "Saving data failed");
+        return;
     }
-    for (size_t i = 0; i < cardWalletsSize; i++) {
-        cCardWalletStructVector.push_back(
-                CWalletStruct::convertToCWalletStruct(cardWalletStructVector[i]));
+    if (upgradedLegacy_) {
+        FileLog::i("TransactionManager", "Legacy v2 save files upgraded to format v3");
+        upgradedLegacy_ = false;
     }
-
-    serializeVector(cWalletStructVector, dirPath + "wallets");
-    serializeVector(cCardWalletStructVector, dirPath + "cardWallets");
-    // Note: state.currencies/cardTxTypes are truncated to MAX_WALLETS entries
-    // (see getTransactionManagerState), so "big" states are persisted with a
-    // limited currency list. The wallet data itself is unaffected.
-    if (state.isBig) {
-        FileLog::w("TransactionManager",
-                   "State is 'big'; currencies/card transaction types are truncated "
-                           "to " + std::to_string(MAX_WALLETS) + " entries when saving");
-    }
-    serializeStruct(state, dirPath + "state");
-
     FileLog::i("TransactionManager", "Finished saving data");
 }
 
 void TransactionManager::loadData(const std::string &dirPath) {
     std::lock_guard<std::mutex> lock(mutex);
-    FileLog::i("TransactionManager", "Loading data");
+    FileLog::i("TransactionManager", "Loading data from dir: " + dirPath);
     clearAll();
-    std::vector<CWalletStruct> walletStructVector;
-    std::vector<CWalletStruct> cardWalletStructVector;
+    upgradedLegacy_ = false;
+
+    std::vector<WalletStruct> walletStructVector;
+    std::vector<WalletStruct> cardWalletStructVector;
     TransactionManagerState state;
 
-    deserializeStruct(state, dirPath + "state");
-
-    deserializeVector(walletStructVector, dirPath + "wallets");
-    deserializeVector(cardWalletStructVector, dirPath + "cardWallets");
-
-    FileLog::i("TransactionManager", "Loading data from file");
+    // v3 files are read as-is; legacy v2 files (same long double ABI) are
+    // converted, and re-saved in v3 on the next store.
+    const int stateVersion = BinaryUtil::readStateFile(dirPath + "state", state);
+    const int walletVersion = BinaryUtil::readWalletStore(dirPath + "wallets", walletStructVector);
+    const int cardVersion = BinaryUtil::readWalletStore(dirPath + "cardWallets", cardWalletStructVector);
+    upgradedLegacy_ = stateVersion == BinaryUtil::kVersionV2 ||
+                      walletVersion == BinaryUtil::kVersionV2 ||
+                      cardVersion == BinaryUtil::kVersionV2;
 
     setTransactionManagerState(state);
 
     if (hasTxData)
         for (auto &walletStruct: walletStructVector) {
             Wallet wallet;
-            wallet.setWalletData(CWalletStruct::convertToWalletStruct(walletStruct));
+            wallet.setWalletData(walletStruct);
             if (!wallet.getIsOutWallet())
                 wallets.insert(std::pair<std::string, Wallet>(walletStruct.currencyType, wallet));
             else
@@ -532,7 +512,7 @@ void TransactionManager::loadData(const std::string &dirPath) {
     if (hasCardTxData)
         for (auto &walletStruct: cardWalletStructVector) {
             Wallet wallet;
-            wallet.setWalletData(CWalletStruct::convertToWalletStruct(walletStruct));
+            wallet.setWalletData(walletStruct);
             cardWallets.insert(std::pair<std::string, Wallet>(walletStruct.currencyType, wallet));
             auto txs = wallet.getTransactions();
             cardTransactions.insert(cardTransactions.end(), txs.begin(), txs.end());
@@ -546,41 +526,10 @@ TransactionManagerState TransactionManager::getTransactionManagerState() {
     state.hasCardTxData = hasCardTxData;
     state.hasTxData = hasTxData;
     state.isReadyFlag = isReadyFlag;
-    state.isBig = currencies.size() > MAX_WALLETS || cardTxTypes.size() > MAX_WALLETS;
     state.txIdCounter = BaseTransaction::getTxIdCounter();
     state.walletIdCounter = Wallet::getWalletIdCounter();
-
-    // Bounded copies into the fixed-size state arrays; live members are
-    // never modified here.
-    if (currencies.size() > MAX_WALLETS) {
-        FileLog::w("TransactionManager",
-                   "Truncating " + std::to_string(currencies.size() - MAX_WALLETS)
-                           + " currencies for state export");
-    }
-    size_t currencyCount = std::min(currencies.size(),
-                                    static_cast<size_t>(MAX_WALLETS));
-    for (size_t i = 0; i < currencyCount; i++) {
-        if (currencies[i].length() >= MAX_STRING_LENGTH) {
-            FileLog::w("TransactionManager",
-                       "Currency name truncated: " + currencies[i]);
-        }
-        stringToCharArray(state.currencies[i], sizeof(state.currencies[i]), currencies[i]);
-    }
-
-    if (cardTxTypes.size() > MAX_WALLETS) {
-        FileLog::w("TransactionManager",
-                   "Truncating " + std::to_string(cardTxTypes.size() - MAX_WALLETS)
-                           + " card transaction types for state export");
-    }
-    size_t typeCount = std::min(cardTxTypes.size(), static_cast<size_t>(MAX_WALLETS));
-    for (size_t i = 0; i < typeCount; i++) {
-        if (cardTxTypes[i].length() >= MAX_STRING_LENGTH) {
-            FileLog::w("TransactionManager",
-                       "Card tx type truncated: " + cardTxTypes[i]);
-        }
-        stringToCharArray(state.cardTxTypes[i], sizeof(state.cardTxTypes[i]), cardTxTypes[i]);
-    }
-
+    state.currencies = currencies;
+    state.cardTxTypes = cardTxTypes;
     return state;
 }
 
@@ -589,19 +538,9 @@ void TransactionManager::setTransactionManagerState(const TransactionManagerStat
     Wallet::setWalletIdCounter(state.walletIdCounter);
     hasCardTxData = state.hasCardTxData;
     hasTxData = state.hasTxData;
-    // Clear before restoring: setTransactionManagerState must be idempotent
-    // even if called twice (e.g. double init).
-    currencies.clear();
-    cardTxTypes.clear();
-    for (const auto &currency: state.currencies) {
-        if (currency[0] == '\0') break;
-        currencies.emplace_back(currency);
-    }
-    for (const auto &type: state.cardTxTypes) {
-        if (type[0] == '\0') break;
-        cardTxTypes.emplace_back(type);
-    }
     isReadyFlag = state.isReadyFlag;
+    currencies = state.currencies;
+    cardTxTypes = state.cardTxTypes;
 }
 
 bool TransactionManager::checkSavedData(const std::string &dirPath) {

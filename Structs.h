@@ -10,7 +10,6 @@
 #include "XML/rapidxml.hpp"
 #include "XML/rapidxml_print.hpp"
 #include "XML/rapidxml_utils.hpp"
-#include "MagicNumbers.h"
 #include "Wallet/WalletStruct.h"
 
 struct TransactionData {
@@ -186,18 +185,6 @@ struct WalletData {
         return walletStruct;
     }
 
-    [[nodiscard]] CWalletStruct getCWalletStruct() const {
-        CWalletStruct walletStruct;
-        walletStruct.walletId = walletId;
-        stringToCharArray(walletStruct.currencyType, sizeof(walletStruct.currencyType), currencyType);
-        walletStruct.balance = balance;
-        walletStruct.nativeBalance = nativeBalance;
-        walletStruct.bonusBalance = bonusBalance;
-        walletStruct.moneySpent = moneySpent;
-        walletStruct.isOutsideWallet = isOutsideWallet;
-        stringToCharArray(walletStruct.notes, sizeof(walletStruct.notes), notes);
-        return walletStruct;
-    }
 
     //! Utility function to serialize a WalletData struct to XML
     [[nodiscard]] std::string serializeToXml() const {
@@ -267,26 +254,13 @@ struct WalletData {
 
 
 struct TransactionManagerState {
-    bool isBig = false;
     bool hasTxData = false;
     bool hasCardTxData = false;
     bool isReadyFlag = false;
     int txIdCounter = 0;
     int walletIdCounter = 0;
-    char currencies[MAX_WALLETS][MAX_STRING_LENGTH] = {};
-    char cardTxTypes[MAX_WALLETS][MAX_STRING_LENGTH] = {};
-};
-
-
-struct BigTransactionMangerState : TransactionManagerState {
-
-    char bigCurrencies[BIG_MAX_WALLETS][MAX_STRING_LENGTH] = {};
-    char bigCardTxTypes[BIG_MAX_WALLETS][MAX_STRING_LENGTH] = {};
-
-    BigTransactionMangerState() {
-        isBig = true;
-    }
-
+    std::vector<std::string> currencies = {};
+    std::vector<std::string> cardTxTypes = {};
 };
 
 #endif //NF_TX_CORE_STRUCTS_H

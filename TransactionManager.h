@@ -11,7 +11,6 @@
 #include "Wallet/WalletBalance.h"
 #include "Price/AssetValue.h"
 #include "Enums.h"
-#include "TransactionManager/TMState.h"
 
 class TransactionManager {
 public:
@@ -149,6 +148,7 @@ private:
     std::vector<std::string> cardTxTypes;
     bool isReadyFlag = false;
     size_t failedLines = 0;
+    bool upgradedLegacy_ = false;   // last load used v2 files: next save upgrades them
 
     //! Get the currencies from the transactions
     void getCurrenciesFromTxs();

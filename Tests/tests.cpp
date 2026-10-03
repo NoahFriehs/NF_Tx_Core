@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 #include <functional>
 #include <fstream>
@@ -22,7 +23,6 @@
 #include "../Price/StaticPrices.h"
 #include "../Structs.h"
 #include "../Transaction/BaseTransaction.h"
-#include "../TransactionManager/TMState.h"
 #include "../TransactionManager.h"
 #include "../TransactionParser.h"
 #include "../Util/CharUtil.h"
@@ -412,63 +412,332 @@ static void testManagerRoundTrip() {
 }
 
 static void testBinaryUtil() {
-    SECTION("BinaryUtil header validation (corrupt / old formats are safe)");
+    SECTION("binary format v3: portable layout, explicit little-endian");
     const std::string dir =
             (std::filesystem::temp_directory_path() / "nf_tx_core_tests_bin").string() + "/";
     std::filesystem::remove_all(dir);
     std::filesystem::create_directories(dir);
 
-    // round trip of a TMState
+    // state round trip incl. strings longer than the legacy 100-char limit
     {
-        TMState out;
-        out.txIdCounter = 42;
-        out.hasTxData = true;
-        std::strcpy(out.currencies[0], "BTC");
-        BinaryUtil::serializeStruct(out, dir + "state_ok");
-        TMState in;
-        BinaryUtil::deserializeStruct(in, dir + "state_ok");
-        CHECK(in.txIdCounter == 42);
-        CHECK(in.hasTxData);
-        CHECK(std::string(in.currencies[0]) == "BTC");
+        TransactionManagerState st;
+        st.hasTxData = true;
+        st.hasCardTxData = true;
+        st.isReadyFlag = true;
+        st.txIdCounter = 424242;
+        st.walletIdCounter = 7;
+        st.currencies = {"BTC",
+                         "ETH",
+                         std::string(150, 'a') /* > legacy limit */};
+        st.cardTxTypes = {"buy", "sell"};
+        CHECK(BinaryUtil::writeStateFile(dir + "state", st));
+        TransactionManagerState in;
+        in.txIdCounter = -1;
+        CHECK(BinaryUtil::readStateFile(dir + "state", in) == 3);
+        CHECK(in.hasTxData && in.hasCardTxData && in.isReadyFlag);
+        CHECK(in.txIdCounter == 424242);
+        CHECK(in.walletIdCounter == 7);
+        CHECK(in.currencies == st.currencies);
+        CHECK(in.cardTxTypes == st.cardTxTypes);
     }
-    // garbage file -> zeroed state, no crash
+
+    // explicit byte layout: CWCP, version 3, little-endian
     {
-        std::ofstream f(dir + "state_garbage", std::ios::binary);
+        TransactionManagerState st;
+        st.txIdCounter = 3;
+        CHECK(BinaryUtil::writeStateFile(dir + "st2", st));
+        std::ifstream f(dir + "st2", std::ios::binary);
+        char b[14] = {};
+        f.read(b, sizeof b);
+        CHECK(f.gcount() == static_cast<std::streamsize>(sizeof b));
+        CHECK(std::memcmp(b, "CWCP", 4) == 0);
+        CHECK(b[4] == 3);
+        CHECK(static_cast<unsigned char>(b[5]) == 0);   // flags
+        int32_t txCounter = 0, walletCounter = 0;
+        std::memcpy(&txCounter, b + 6, 4);
+        std::memcpy(&walletCounter, b + 10, 4);
+        CHECK(txCounter == 3);                          // LE int
+        CHECK(walletCounter == 0);
+    }
+
+    // empty store: header + zero count is a complete file
+    {
+        CHECK(BinaryUtil::writeWalletStore(dir + "empty", {}));
+        CHECK(std::filesystem::file_size(dir + "empty") == 5 + 4);
+        std::vector<WalletStruct> in;
+        CHECK(BinaryUtil::readWalletStore(dir + "empty", in) == 3);
+        CHECK(in.empty());
+    }
+
+    // garbage magic / missing file
+    {
+        std::ofstream f(dir + "garbage", std::ios::binary);
         f.write(std::string(64, 'X').c_str(), 64);
         f.close();
-        TMState in;
-        in.txIdCounter = 7;                       // must be zeroed
-        BinaryUtil::deserializeStruct(in, dir + "state_garbage");
-        CHECK(in.txIdCounter == 0);
-        CHECK(!in.hasTxData);
+        std::vector<WalletStruct> in;
+        CHECK(BinaryUtil::readWalletStore(dir + "garbage", in) == 0);
+        CHECK(in.empty());
+        CHECK(BinaryUtil::readWalletStore(dir + "no_such_file", in) == 0);
     }
-    // old format (no header) -> rejected
+
+    // corrupt counts are clamped by the remaining file bytes, never fatal
     {
-        TMState raw;
-        raw.txIdCounter = 9;
-        // write the struct body WITHOUT a header, as pre-v2 files did
-        std::ofstream f(dir + "state_old", std::ios::binary);
-        f.write(reinterpret_cast<const char *>(&raw), sizeof(TMState));
+        std::ofstream f(dir + "badcount", std::ios::binary);
+        f.write("CWCP", 4);
+        f.write("\x03", 1);
+        f.write("\xff\xff\xff\xff", 4);   // count = 4 GiB, file has nothing
         f.close();
-        TMState in;
-        in.txIdCounter = 7;
-        BinaryUtil::deserializeStruct(in, dir + "state_old");
-        CHECK(in.txIdCounter == 0);
+        std::vector<WalletStruct> in;
+        CHECK(BinaryUtil::readWalletStore(dir + "badcount", in) == 3);
+        CHECK(in.empty());
+
+        std::ofstream g(dir + "badstring", std::ios::binary);
+        g.write("CWCP", 4);
+        g.write("\x03", 1);
+        g.write("\x01", 1);                    // flags: hasTxData
+        g.write("\x01\x00\x00\x00", 4);        // txIdCounter
+        g.write("\x00\x00\x00\x00", 4);        // walletIdCounter
+        g.write("\xff\xff\xff\x7f", 4);        // currency count = 2^31-1
+        g.close();
+        TransactionManagerState st;
+        st.txIdCounter = -1;
+        CHECK(BinaryUtil::readStateFile(dir + "badstring", st) == 3);
+        CHECK(st.hasTxData);
+        CHECK(st.txIdCounter == 1);
+        CHECK(st.currencies.empty());
     }
-    // header with wrong long double size -> rejected
+
+    // a v2 header from a foreign ABI is rejected (long double mismatch)
     {
-        std::ofstream f(dir + "state_arch", std::ios::binary);
-        BinaryUtil::FileHeader h;
-        std::strcpy(h.magic, "CWCP");
-        h.version = 2;
-        h.longDoubleSize = sizeof(long double) == 16 ? 8 : 16;     // wrong size
-        f.write(reinterpret_cast<const char *>(&h), sizeof(h));
+        std::ofstream f(dir + "wrong_abi", std::ios::binary);
+        f.write("CWCP", 4);
+        const int version = 2;
+        f.write(reinterpret_cast<const char *>(&version), 4);
+        const int wrongSize = static_cast<int>(sizeof(long double)) == 16 ? 8 : 16;
+        f.write(reinterpret_cast<const char *>(&wrongSize), 4);
         f.close();
-        TMState in;
-        in.txIdCounter = 7;
-        BinaryUtil::deserializeStruct(in, dir + "state_arch");
-        CHECK(in.txIdCounter == 0);
+        TransactionManagerState st;
+        st.txIdCounter = -1;
+        CHECK(BinaryUtil::readStateFile(dir + "wrong_abi", st) == 0);
+        CHECK(st.txIdCounter == -1);   // untouched
     }
+    std::filesystem::remove_all(dir);
+}
+
+static void testUnlimitedPersistence() {
+    SECTION("v3 stores hold more wallets/transactions/chars than the legacy caps");
+    const std::string dir =
+            (std::filesystem::temp_directory_path() / "nf_tx_core_tests_big").string() + "/";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    const size_t nWallets = 150;        // legacy cap: 100 wallets
+    const size_t nTxsPerWallet = 1200;  // legacy cap: 1000 transactions per wallet
+    const std::string longDescription(300, 'x');  // legacy cap: 100 chars
+    const std::string longNotes(250, 'n');        // legacy cap: 100 / 255
+
+    std::vector<WalletStruct> in;
+    for (size_t i = 0; i < nWallets; i++) {
+        WalletStruct w;
+        w.walletId = static_cast<int>(i);
+        w.currencyType = "CUR" + std::to_string(i % 17);
+        w.balance = 1.25 * (i % 11);
+        w.nativeBalance = 2.5;
+        w.bonusBalance = 0.0;
+        w.moneySpent = 0.5;
+        w.isOutsideWallet = (i % 2 == 0);
+        w.notes = (i == 0) ? longNotes : "note";
+        for (size_t j = 0; j < nTxsPerWallet; j++) {
+            TransactionStruct t;
+            t.transactionId = static_cast<int>(i * nTxsPerWallet + j);
+            t.walletId = static_cast<int>(i);
+            t.fromWalletId = -1;
+            t.description = (i == 0 && j == 0) ? longDescription : "d";
+            t.transactionDate = TimestampConverter::stringToTm("2023-05-06 07:08:09");
+            t.currencyType = "BTC";
+            t.toCurrencyType = "USD";
+            t.amount = 1.5;
+            t.toAmount = 100.25;
+            t.nativeAmount = 100.25;
+            t.amountBonus = 0.0;
+            t.transactionType = TransactionType::crypto_purchase;
+            t.transactionTypeString = "crypto_purchase";
+            t.transactionHash = "hash";
+            t.isOutsideTransaction = false;
+            t.notes = "";
+            w.transactions.push_back(std::move(t));
+        }
+        in.push_back(std::move(w));
+    }
+
+    CHECK(BinaryUtil::writeWalletStore(dir + "big", in));
+
+    std::vector<WalletStruct> out;
+    CHECK(BinaryUtil::readWalletStore(dir + "big", out) == 3);
+    CHECK(out.size() == nWallets);
+    CHECK(out[0].transactions.size() == nTxsPerWallet);
+    CHECK(out[149].walletId == 149);
+    CHECK(out[148].isOutsideWallet);
+    CHECK(out[149].isOutsideWallet == false);
+    CHECK(out[1].isOutsideWallet == false);
+    CHECK(out[0].notes == longNotes);
+    CHECK(out[0].transactions[0].description == longDescription);
+    CHECK(out[0].transactions[1199].transactionId == 1199);
+    CHECK_NEAR(static_cast<double>(out[3].balance), 1.25 * 3, 1e-12);
+    CHECK(out[0].transactions[0].transactionDate.tm_hour == 7);
+
+    // compact: no per-wallet 1000-slot slab (the legacy writer needed
+    // multiple gigabytes for this data), and a small store is small
+    CHECK(std::filesystem::file_size(dir + "big") < 40u * 1024 * 1024);
+    {
+        std::vector<WalletStruct> one = in;
+        one.resize(1);
+        CHECK(BinaryUtil::writeWalletStore(dir + "small", one));
+        CHECK(std::filesystem::file_size(dir + "small") < 300 * 1024);
+    }
+
+    // full TransactionManager pipeline with the legacy caps exceeded
+    {
+        std::vector<std::string> lines{CDC_HEADER};
+        const int nLines = 1100;   // > 1000 transactions, > 100 currencies
+        for (int i = 0; i < nLines; i++) {
+            char cur[16];
+            std::snprintf(cur, sizeof cur, "CUR%03d", i);
+            lines.push_back(cdcLine("2023-01-01 00:00:00", cur, "2.0", "200", "crypto_purchase"));
+        }
+        TransactionParser parser(lines);
+        parser.parseFromCsv(Mode::CDC);
+        TransactionManager tm;
+        tm.setTransactions(parser.getTransactions(), Mode::CDC);
+        tm.processTransactions();
+        CHECK(tm.getWallets().size() == static_cast<size_t>(nLines));
+        CHECK(tm.getCurrencies().size() == static_cast<size_t>(nLines));
+        tm.saveData(dir);
+
+        TransactionManager loaded;
+        loaded.loadData(dir);
+        CHECK(loaded.getWallets().size() == static_cast<size_t>(nLines));
+        CHECK(loaded.getCurrencies().size() == static_cast<size_t>(nLines));
+        CHECK(loaded.getTransactions().size() == static_cast<size_t>(nLines));
+    }
+    std::filesystem::remove_all(dir);
+}
+
+static void testLegacyV2Migration() {
+    SECTION("legacy v2 files stay readable and are upgraded to v3 on save");
+    const std::string dir =
+            (std::filesystem::temp_directory_path() / "nf_tx_core_tests_legacy").string() + "/";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    // synthesize what the old writer produced: header + native u64 + raw structs
+    {
+        std::ofstream f(dir + "wallets", std::ios::binary | std::ios::trunc);
+        f.write(BinaryUtil::kMagic, 4);
+        const int version = 2;
+        const int lds = static_cast<int>(sizeof(long double));
+        f.write(reinterpret_cast<const char *>(&version), 4);
+        f.write(reinterpret_cast<const char *>(&lds), 4);
+        const uint64_t count = 2;
+        f.write(reinterpret_cast<const char *>(&count), 8);
+
+        BinaryUtil::V2::Wallet a{};
+        a.walletId = 11;
+        std::strcpy(a.currencyType, "BTC");
+        a.numTransactions = 1;
+        a.balance = 3.5L;
+        std::strcpy(a.notes, "legacy");
+        auto &t = a.transactions[0];
+        t.transactionId = 5;
+        t.walletId = 11;
+        std::strcpy(t.description, "coffee");
+        std::strcpy(t.dateTimeStr, "2023-04-01 12:34:56");
+        std::strcpy(t.currencyType, "EUR");
+        std::strcpy(t.toCurrencyType, "USD");
+        t.amount = 3.2L;
+        t.nativeAmount = 3.2L;
+        t.transactionType = TransactionType::crypto_purchase;
+        std::strcpy(t.transactionTypeString, "crypto_purchase");
+
+        BinaryUtil::V2::Wallet b{};
+        b.walletId = 12;
+        std::strcpy(b.currencyType, "ETH");
+
+        f.write(reinterpret_cast<const char *>(&a), sizeof a);
+        f.write(reinterpret_cast<const char *>(&b), sizeof b);
+    }
+    {
+        std::ofstream f(dir + "state", std::ios::binary | std::ios::trunc);
+        f.write(BinaryUtil::kMagic, 4);
+        const int version = 2;
+        const int lds = static_cast<int>(sizeof(long double));
+        f.write(reinterpret_cast<const char *>(&version), 4);
+        f.write(reinterpret_cast<const char *>(&lds), 4);
+        BinaryUtil::V2::State s{};
+        s.hasTxData = true;
+        s.txIdCounter = 100;
+        s.walletIdCounter = 200;
+        std::strcpy(s.currencies[0], "BTC");
+        std::strcpy(s.currencies[1], "ETH");
+        f.write(reinterpret_cast<const char *>(&s), sizeof s);
+    }
+    // cardWallets: empty v2 store
+    {
+        std::ofstream f(dir + "cardWallets", std::ios::binary | std::ios::trunc);
+        f.write(BinaryUtil::kMagic, 4);
+        const int version = 2;
+        const int lds = static_cast<int>(sizeof(long double));
+        f.write(reinterpret_cast<const char *>(&version), 4);
+        f.write(reinterpret_cast<const char *>(&lds), 4);
+        const uint64_t count = 0;
+        f.write(reinterpret_cast<const char *>(&count), 8);
+    }
+
+    // direct reader checks
+    std::vector<WalletStruct> in;
+    CHECK(BinaryUtil::readWalletStore(dir + "wallets", in) == 2);
+    CHECK(in.size() == 2);
+    CHECK(in[0].walletId == 11);
+    CHECK(in[0].currencyType == "BTC");
+    CHECK(in[0].notes == "legacy");
+    CHECK_NEAR(static_cast<double>(in[0].balance), 3.5, 1e-12);
+    CHECK(in[0].transactions.size() == 1);
+    CHECK(in[0].transactions[0].description == "coffee");
+    CHECK(in[0].transactions[0].currencyType == "EUR");
+    CHECK(in[0].transactions[0].transactionDate.tm_hour == 12);
+    CHECK(in[1].currencyType == "ETH");
+
+    // full pipeline: load the legacy dir, re-save -> v3, re-load -> identical
+    TransactionManager tm;
+    tm.loadData(dir);
+    CHECK(tm.getTransactionManagerState().hasTxData);
+    CHECK(tm.getWallets().size() == 2);
+    CHECK(tm.getCurrencies().size() == 2);
+    CHECK(tm.getTransactions().size() == 1);
+    const double spent = tm.getWallets().at("BTC").getMoneySpent();
+
+    tm.saveData(dir);
+
+    // the files are now v3
+    for (const char *name: {"wallets", "state", "cardWallets"}) {
+        std::ifstream f(dir + name, std::ios::binary);
+        char hb[5] = {};
+        f.read(hb, 5);
+        CHECK(std::memcmp(hb, "CWCP", 4) == 0);
+        CHECK(hb[4] == 3);
+    }
+
+    TransactionManager loaded;
+    loaded.loadData(dir);
+    CHECK(loaded.getWallets().size() == 2);
+    CHECK(loaded.getTransactions().size() == 1);
+    CHECK_NEAR(static_cast<double>(loaded.getWallets().at("BTC").getMoneySpent()), spent, 1e-12);
+    {
+        Wallet btcWallet = loaded.getWallets().at("BTC");
+        const auto txs = btcWallet.getTransactions();
+        CHECK(!txs.empty() && txs[0].getTransactionData().description == "coffee");
+    }
+
     std::filesystem::remove_all(dir);
 }
 
@@ -535,6 +804,8 @@ int main() {
     testManagerStates();
     testManagerRoundTrip();
     testBinaryUtil();
+    testUnlimitedPersistence();
+    testLegacyV2Migration();
     testPriceCache();
     testXmlSerialization();
     testFileLogLevels();
