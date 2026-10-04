@@ -818,7 +818,8 @@ static void testBlockPitParser() {
         CHECK(tx.getCurrencyType() == "BTC");
         CHECK_NEAR(tx.getAmount(), 0.00205761, 1e-8);
         CHECK(tx.getToCurrencyType() == "EUR");
-        CHECK_NEAR(tx.getToAmount(), 499.99, 1e-6);
+        // The EUR fee is charged on top of the outgoing fiat side
+        CHECK_NEAR(tx.getToAmount(), 499.99 + 0.99, 1e-6);
         CHECK(tx.getTransactionType() == crypto_purchase);
         CHECK_NEAR(tx.getFeeAmount(), 0.99, 1e-9);
         CHECK(tx.getFeeAsset() == "EUR");
@@ -928,6 +929,38 @@ static void testBlockPitManager() {
         CHECK(tm->getOutWallets().count("EUR") == 0);
     }
 
+    SECTION("BlockPit fees reduce the paid side; fee tokens settle their own wallet");
+    {
+        // Purchase with an EUR fee: charged on top of the outgoing fiat side
+        auto tx = parseBlockPit(bpLine("01.10.2026 21:30:23", "Kraken", "Trade", "EUR", "50", "BTC", "0.001", "EUR", "1.50"));
+        CHECK_NEAR(tx.getToAmount(), 50.0 + 1.50, 1e-9);
+        CHECK_NEAR(tx.getNativeAmount(), 50.0 + 1.50, 1e-9);
+        CHECK_NEAR(tx.getAmount(), 0.001, 1e-9);
+
+        // Deposit with an EUR fee (the 51 EUR / 1 EUR Binance case):
+        // deducted from what arrives
+        auto tx2 = parseBlockPit(bpLine("03.04.2022 12:00:00", "Binance", "Non-Taxable In", "", "", "EUR", "51", "EUR", "1"));
+        CHECK_NEAR(tx2.getAmount(), 50.0, 1e-9);
+
+        // A KFEE fee is not a side of the trade: row amounts stay untouched,
+        // the fee is only recorded for the manager to settle
+        auto tx3 = parseBlockPit(bpLine("01.10.2026 21:30:23", "Kraken", "Trade", "EUR", "50", "BTC", "0.001", "KFEE", "28.51"));
+        CHECK_NEAR(tx3.getToAmount(), 50.0, 1e-9);
+        CHECK_NEAR(tx3.getAmount(), 0.001, 1e-9);
+        CHECK(tx3.getFeeAsset() == "KFEE");
+
+        // Manager: the KFEE gift (held position, not a bonus) minus the KFEE
+        // fees leaves exactly the remainder that was held
+        std::vector<std::string> data{
+                blockPitHeader(),
+                bpLine("13.10.2023 11:13:00", "Kraken", "Gift Received", "", "", "KFEE", "10000"),
+                bpLine("01.11.2023 21:30:23", "Kraken", "Trade", "EUR", "50", "BTC", "0.001", "KFEE", "28.51"),
+                bpLine("02.11.2023 21:30:23", "Kraken", "Trade", "EUR", "100", "BTC", "0.002", "KFEE", "14.82")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK_NEAR(tm->getWallets().at("KFEE").getBalance(), 10000.0 - 28.51 - 14.82, 1e-9);
+        CHECK_NEAR(tm->getWallets().at("EUR").getBalance(), -150.0, 1e-9);
+    }
+
     SECTION("BlockPit withdrawal debits the asset wallet and credits outside");
     {
         std::vector<std::string> data{blockPitHeader(),
@@ -967,7 +1000,9 @@ static void testBlockPitManager() {
     {
         std::vector<std::string> data{blockPitHeader(),
                                       bpLine("01.10.2026 21:30:23", "Bitpanda", "Interest", "", "", "KFEE", "100"),
-                                      bpLine("02.10.2026 21:30:23", "Bitpanda", "Fee", "KFEE", "28.51", "", "", "KFEE", "28.51"),
+                                      // Real standalone "Fee" label rows carry the fee in the
+                                      // outgoing amount only (no fee columns)
+                                      bpLine("02.10.2026 21:30:23", "Bitpanda", "Fee", "KFEE", "28.51", "", "", "", ""),
                                       bpLine("03.10.2026 21:30:23", "Bitpanda", "Lost", "KFEE", "5", "", "")};
         auto tm = buildTmFromBlockPitLines(data);
         CHECK_NEAR(tm->getWallets().at("KFEE").getBalance(), 100 - 28.51 - 5, 1e-9);

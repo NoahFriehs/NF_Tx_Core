@@ -280,13 +280,23 @@ void TransactionManager::addBlockPitTransactionsToWallets() {
             }
 
             case crypto_airdrop_credited:
-            case crypto_bounty_credited:
-            case crypto_gift_received: {
+            case crypto_bounty_credited: {
                 // Rewarded into the incoming asset as bonus
                 auto *wallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
                 tx.setWalletId(wallet->getWalletId());
                 tx.setFromWalletId(wallet->getWalletId());
                 tx.setAmountToAmountBonus();
+                wallet->addTransaction(tx, false);
+                break;
+            }
+
+            case crypto_gift_received: {
+                // A gift is a held position, not a reward: normal balance
+                // credit. E.g. Kraken's 10,000 KFEE gift is spent on KFEE
+                // fees, so the KFEE wallet has to balance.
+                auto *wallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
+                tx.setWalletId(wallet->getWalletId());
+                tx.setFromWalletId(wallet->getWalletId());
                 wallet->addTransaction(tx, false);
                 break;
             }
@@ -316,6 +326,23 @@ void TransactionManager::addBlockPitTransactionsToWallets() {
                 FileLog::w("TransactionManager",
                            "Unhandled BlockPit type: " + tx.getTransactionTypeString());
                 break;
+        }
+
+        // Fees paid in a token that is not a side of the row (Kraken's KFEE
+        // fee token) settle from that token's own balance; no fiat side of
+        // the row is touched by such a fee.
+        if (!tx.getFeeAsset().empty() && tx.getFeeAmount() > 0.0L &&
+            tx.getFeeAsset() != tx.getCurrencyType() &&
+            tx.getFeeAsset() != tx.getToCurrencyType()) {
+            BaseTransaction feeTx = tx;
+            feeTx.setTransactionTypeString("Fee");
+            feeTx.setCurrencyType(tx.getFeeAsset());
+            feeTx.setToAmount(0.0L);
+            feeTx.setNativeAmount(0.0L);
+            feeTx.setAmount(tx.getFeeAmount());
+            auto &feeWallet = getOrCreateWallet(wallets, tx.getFeeAsset());
+            feeTx.setWalletId(feeWallet.getWalletId());
+            feeWallet.withdraw(feeTx);
         }
     }
 }

@@ -316,6 +316,49 @@ void BaseTransaction::parseBlockPit(const std::string &txString) {
         feeAmount = std::stold(incomingFeeAmountStr);
     }
 
+    // Fee handling (verified against the real account balances in the 2026
+    // export): a fee in the row's OUTGOING asset is charged on top of that
+    // amount (Kraken's EUR pair-trade fees sum to 1.4572; 6,200 in -
+    // 6,198.53 out - 1.4572 fees = 0.0079 EUR, the actual Kraken balance),
+    // while a fee in the INCOMING asset is deducted from what arrives
+    // (Binance: 51 EUR deposit, 1 EUR fee, 50 credit nets the account to 0).
+    // Fee tokens that are neither side of the row (Kraken's KFEE) are left
+    // to the manager, which settles them out of the token's own wallet.
+    {
+        long double feeValue = 0.0L;
+        try {
+            feeValue = incomingFeeAmountStr.empty() ? 0.0L : std::stold(incomingFeeAmountStr);
+        } catch (const std::exception &) {
+        }
+        if (!incomingFeeAsset.empty() && feeValue > 0.0L) {
+            auto applyFee = [](const std::string &amountStr, long double fee, bool deduct) -> std::string {
+                if (amountStr.empty()) return amountStr;
+                long double v;
+                try {
+                    v = std::stold(amountStr);
+                } catch (const std::exception &) {
+                    return amountStr;
+                }
+                v = deduct ? v - fee : v + fee;
+                if (v < 0.0L) v = 0.0L;
+                char buf[64];
+                std::snprintf(buf, sizeof(buf), "%.15Lf", v);
+                return buf;
+            };
+            if (incomingFeeAsset == outgoingAsset) {
+                outgoingAmountStr = applyFee(outgoingAmountStr, feeValue, false);
+            } else if (incomingFeeAsset == incomingAsset) {
+                incomingAmountStr = applyFee(incomingAmountStr, feeValue, true);
+            } else if (isFiatCurrency(incomingFeeAsset)) {
+                if (isFiatCurrency(outgoingAsset)) {
+                    outgoingAmountStr = applyFee(outgoingAmountStr, feeValue, false);
+                } else if (isFiatCurrency(incomingAsset)) {
+                    incomingAmountStr = applyFee(incomingAmountStr, feeValue, true);
+                }
+            }
+        }
+    }
+
     // Signed-amount convention (same as the CDC/Kraken parsers): a positive
     // amount increases the owning wallet's balance, a negative amount reduces
     // it. BlockPit reports absolute values, so outgoing quantities are stored
