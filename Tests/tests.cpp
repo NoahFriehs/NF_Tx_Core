@@ -137,6 +137,19 @@ static std::unique_ptr<TransactionManager> buildTmFromBlockPitLines(
     return tm;
 }
 
+// Committed synthetic fixtures in Tests/fixtures/ (path via
+// NF_TX_CORE_TEST_DATA_DIR, set by CMake): derived from the shape of real
+// exports (headers, labels, fee layout, BlockPit CRLF endings) with
+// synthetic values - the real data files stay out of git.
+static std::vector<std::string> loadFixture(const char *name) {
+    std::vector<std::string> lines;
+    std::ifstream f(std::filesystem::path(NF_TX_CORE_TEST_DATA_DIR) / name);
+    CHECK(f.good());
+    std::string line;
+    while (std::getline(f, line)) lines.push_back(line);
+    return lines;
+}
+
 // ----------------------------------------------------------------- tests ---
 
 static void testSplitString() {
@@ -1351,6 +1364,159 @@ static void testParseBudget() {
     CHECK(tmOk->getWallets().size() == 2);
 }
 
+static void testCdcCryptoFixture() {
+    SECTION("fixture: CDC crypto export");
+    auto lines = loadFixture("cdc_crypto.csv");
+    if (lines.empty()) return;
+    TransactionParser parser(lines);
+    parser.parseFromCsv(Mode::CDC);
+    CHECK(parser.getTransactions().size() == 16);
+    CHECK(parser.getFailedLines() == 1);
+    auto tm = std::make_unique<TransactionManager>();
+    tm->setTransactions(parser.getTransactions(), Mode::CDC);
+    tm->processTransactions();
+    const auto &w = tm->getWallets();
+    CHECK(w.size() == 7);
+    CHECK_NEAR(w.at("CRO").getBalance(), 768.41, 1e-9);
+    CHECK_NEAR(w.at("CRO").getMoneySpent(), 359.00, 1e-9);
+    CHECK_NEAR(w.at("CRO").getBonusBalance(), 105.01, 1e-9);
+    CHECK_NEAR(w.at("BTC").getBalance(), 0.0004, 1e-12);
+    CHECK_NEAR(w.at("BTC").getMoneySpent(), 12.87, 1e-9);
+    CHECK_NEAR(w.at("ETH").getBalance(), 0.0005, 1e-12);
+    CHECK_NEAR(w.at("ETH").getMoneySpent(), 0.25, 1e-9);
+    CHECK_NEAR(w.at("LUNA").getBalance(), -0.01323, 1e-12);
+    CHECK_NEAR(w.at("LUNA").getBonusBalance(), -0.01323, 1e-12);
+    CHECK_NEAR(w.at("LUNC").getBalance(), 0.01323, 1e-12);
+    CHECK_NEAR(w.at("LUNA2").getMoneySpent(), 0.027, 1e-9);
+    CHECK_NEAR(w.at("EUR").getBalance(), -99.41, 1e-9);
+    CHECK_NEAR(w.at("EUR").getMoneySpent(), 99.41, 1e-9);
+    // card scope: inner wallets, the "EUR" wallet skipped
+    double spent = 0.0, bonus = 0.0, bal = 0.0;
+    for (const auto &wc: w)
+        if (wc.first != "EUR") {
+            spent += wc.second.getMoneySpent();
+            bonus += wc.second.getBonusBalance();
+            bal += wc.second.getBalance();
+        }
+    CHECK_NEAR(spent, 372.14738, 1e-9);
+    CHECK_NEAR(bonus, 105.0147, 1e-9);
+    CHECK_NEAR(bal, 768.415, 1e-9);
+    const auto &out = tm->getOutWallets();
+    CHECK(out.size() == 1);                    // only the withdrawn asset leaves
+    CHECK(out.count("CRO") == 1);
+    CHECK_NEAR(out.at("CRO").getBalance(), 38.90, 1e-9);
+    CHECK_NEAR(out.at("CRO").getMoneySpent(), -14.19, 1e-9);
+    const auto &c = tm->getCurrencies();
+    CHECK(c.size() == 7);
+    CHECK(c[0] == "ETH" && c[1] == "BTC" && c[2] == "CRO" && c[3] == "EUR"
+          && c[4] == "LUNA" && c[5] == "LUNC" && c[6] == "LUNA2");
+    std::vector<double> prices(c.size(), 1.0);
+    prices[1] = 50.0;                          // BTC
+    tm->setPrices(prices);
+    tm->calculateWalletBalances();
+    double value = 0.0;
+    for (const auto &wc: w)
+        if (wc.first != "EUR") value += tm->getValueOfAssets(wc.second.getWalletId());
+    CHECK_NEAR(value, 768.4346, 1e-9);
+}
+
+static void testCardFixture() {
+    SECTION("fixture: CDC card export");
+    auto lines = loadFixture("cdc_card.csv");
+    if (lines.empty()) return;
+    TransactionParser parser(lines);
+    parser.parseFromCsv(Mode::Card);
+    CHECK(parser.getTransactions().size() == 4);
+    CHECK(parser.getFailedLines() == 0);
+    const auto &txs = parser.getTransactions();
+    CHECK(txs[0].getTransactionTypeString() == "Supermarket");   // card type is the description
+    CHECK_NEAR(txs[0].getAmount(), 10.0, 1e-12);
+    CHECK_NEAR(txs[0].getNativeAmount(), -10.0, 1e-12);
+    TransactionManager tm;
+    tm.setTransactions(parser.getTransactions(), Mode::Card);
+    tm.processTransactions();
+    auto state = tm.getTransactionManagerState();
+    CHECK(state.hasCardTxData);
+    CHECK(!state.hasTxData);
+    const auto &cw = tm.getCardWallets();
+    CHECK(cw.size() == 4);                      // one wallet per merchant
+    CHECK(cw.count("Supermarket") == 1);
+    CHECK(cw.count("Cafeteria") == 1);
+    CHECK(cw.count("Streaming") == 1);
+    CHECK(cw.count("Groceries") == 1);
+    double spent = 0.0, bal = 0.0;
+    for (const auto &wc: cw) {
+        spent += wc.second.getMoneySpent();
+        bal += wc.second.getBalance();
+    }
+    CHECK_NEAR(spent, -72.0, 1e-9);
+    CHECK_NEAR(bal, 72.0, 1e-9);
+}
+
+static void testKrakenFixture() {
+    SECTION("fixture: Kraken trade CSV");
+    auto lines = loadFixture("kraken_trades.csv");
+    if (lines.empty()) return;
+    TransactionParser parser(lines);
+    parser.parseFromCsv(Mode::Kraken);
+    CHECK(parser.getTransactions().size() == 2);
+    CHECK(parser.getFailedLines() == 1);
+    const auto &txs = parser.getTransactions();
+    CHECK(txs[0].getCurrencyType() == "BTC");           // buy keeps the base coin
+    CHECK(txs[0].getTransactionTypeString() == "buy");
+    CHECK_NEAR(txs[0].getAmount(), 0.0007, 1e-15);
+    CHECK_NEAR(txs[0].getNativeAmount(), 49.5, 1e-12);
+    CHECK_NEAR(txs[0].getFeeAmount(), 0.15, 1e-12);
+    CHECK(txs[1].getCurrencyType() == "ZEUR");          // sell takes the quote part
+    CHECK(txs[1].getTransactionTypeString() == "sell");
+    CHECK_NEAR(txs[1].getAmount(), -0.0003, 1e-15);
+    CHECK_NEAR(txs[1].getNativeAmount(), -21.0, 1e-12);
+    TransactionManager tm;
+    tm.setTransactions(parser.getTransactions(), Mode::Kraken);
+    tm.processTransactions();
+    const auto &w = tm.getWallets();
+    CHECK(w.size() == 2);                       // BTC (buy) + ZEUR (sell row)
+    CHECK_NEAR(w.at("BTC").getBalance(), 0.0007, 1e-15);
+    CHECK_NEAR(w.at("BTC").getMoneySpent(), 49.5, 1e-12);
+}
+
+static void testBlockPitFixture() {
+    SECTION("fixture: BlockPit export (CRLF)");
+    auto lines = loadFixture("blockpit_export.csv");
+    if (lines.empty()) return;
+    CHECK(lines[0].back() == '\r');                 // real exports are CRLF
+    TransactionParser parser(lines);
+    parser.parseFromCsv(Mode::BlockPit);
+    CHECK(parser.getTransactions().size() == 14);
+    CHECK(parser.getFailedLines() == 1);
+    auto tm = buildTmFromBlockPitLines(lines);
+    const auto &w = tm->getWallets();
+    CHECK(w.size() == 9);
+    CHECK_NEAR(w.at("KFEE").getBalance(), 1.49, 1e-9);    // 30 gift - 28.51 fee
+    CHECK_NEAR(w.at("SCX").getBalance(), 0.5, 1e-12);
+    CHECK_NEAR(w.at("SCX").getBonusBalance(), 0.5, 1e-12);
+    CHECK_NEAR(w.at("ETH").getBalance(), 0.0005, 1e-12);  // Staking: balance, no bonus
+    CHECK_NEAR(w.at("BTC").getBalance(), 0.00321752, 1e-12);
+    CHECK_NEAR(w.at("BTC").getMoneySpent(), 150.8298, 1e-9);
+    CHECK_NEAR(w.at("EUR").getBalance(), -120.8298, 1e-9);
+    CHECK_NEAR(w.at("Laptop").getBalance(), -4.95974, 1e-12);   // swap debit
+    CHECK_NEAR(w.at("BCH").getBalance(), 0.0729602, 1e-12);
+    CHECK_NEAR(w.at("CRO").getBalance(), 1.25, 1e-9);
+    CHECK_NEAR(w.at("CRO").getBonusBalance(), 2.5, 1e-9);
+    CHECK_NEAR(w.at("USDT").getBalance(), 49.0, 1e-9);        // 50 airdrop - 1 fee
+    CHECK_NEAR(w.at("USDT").getBonusBalance(), 49.0, 1e-9);
+    double spent = 0.0, bonus = 0.0;
+    for (const auto &wc: w) {
+        spent += wc.second.getMoneySpent();
+        bonus += wc.second.getBonusBalance();
+    }
+    CHECK_NEAR(spent, 150.8298, 1e-9);
+    CHECK_NEAR(bonus, 52.0, 1e-9);
+    const auto &out = tm->getOutWallets();
+    CHECK(out.size() == 1);                       // only BCH left the inner wallets
+    CHECK_NEAR(out.at("BCH").getBalance(), -0.05, 1e-12);
+}
+
 // ------------------------------------------------------------------ main ---
 
 int main() {
@@ -1381,6 +1547,10 @@ int main() {
     testMoneySpentSeries();
     testDailySeries();
     testParseBudget();
+    testCdcCryptoFixture();
+    testCardFixture();
+    testKrakenFixture();
+    testBlockPitFixture();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,
                 g_failures == 1 ? "" : "s");

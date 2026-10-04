@@ -1,0 +1,18 @@
+Timestamp (UTC),Transaction Description,Currency,Amount,To Currency,To Amount,Native Currency,Native Amount,Native Amount (in USD),Transaction Kind,Transaction Hash
+2024-01-05 09:00:00,Supercharger Reward,ETH,0.0005,,,USD,0.25,0.25,supercharger_reward_to_app_credited,
+2024-01-08 10:30:00,Crypto Earn,BTC,0.0001,,,USD,0.50,0.50,crypto_earn_interest_paid,
+2024-01-10 12:00:00,Buy CRO,CRO,420.00,,,USD,231.03,231.03,crypto_purchase,
+2024-01-12 14:30:00,Buy BTC,BTC,0.0003,,,USD,12.37,12.37,crypto_purchase,
+2024-01-15 08:15:00,Card Cashback,CRO,3.51,,,USD,0.51,0.51,referral_card_cashback,
+2024-01-20 11:00:00,EUR -> CRO,EUR,-99.41,CRO,282.30,USD,99.41,99.41,viban_purchase,
+2024-01-25 16:45:00,Withdraw CRO,CRO,-38.90,,,USD,14.19,14.19,crypto_withdrawal,
+2024-02-01 10:39:40,Balance Conversion,LUNA,-0.01323,,,USD,0.00018,0.00018,crypto_wallet_swap_debited,
+2024-02-01 10:39:40,Balance Conversion,LUNC,0.01323,,,USD,0.0002,0.0002,crypto_wallet_swap_credited,
+2024-02-02 18:19:16,Supercharger Stake,CRO,-117.54,,,USD,15.99,15.99,supercharger_deposit,
+2024-02-03 12:26:51,Supercharger Withdrawal,CRO,722.80,,,USD,247.73,247.73,supercharger_withdrawal,
+2024-02-04 16:08:34,Crypto Earn Allocation,BTC,-0.0186,,,USD,410.90,410.90,crypto_earn_program_created,
+2024-02-05 12:27:40,CRO Stake,CRO,-993.00,,,USD,350.07,350.07,lockup_lock,
+2024-02-06 06:09:48,Mission Rewards Deposit,CRO,3.10,,,USD,0.44,0.44,rewards_platform_deposit_credited,
+2024-02-07 11:08:22,Adjustment (Credit),LUNA2,0.0041,,,USD,0.027,0.027,admin_wallet_credited,
+2024-02-08 18:19:24,Card Rebate,CRO,101.50,,,USD,13.86,13.86,reimbursement,
+only,four,columns

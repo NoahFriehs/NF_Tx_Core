@@ -1,0 +1,16 @@
+Date (UTC);Integration Name;Label;Outgoing Asset;Outgoing Amount;Incoming Asset;Incoming Amount;Fee Asset (optional);Fee Amount (optional);Comment (optional);Trx. ID (optional);Source Type;Source Name
+01.01.2024 09:00:00;Kraken _;Gift Received;;;KFEE;30;;;Stock Giveaway;f0001;API;Kraken
+01.01.2024 10:00:00;Bitpanda Depot - Main;Airdrop;;;SCX;0.5;;;Reward;f0002;API;Bitpanda
+02.01.2024 10:00:00;Bitpanda Depot - Staking;Staking;;;ETH;0.0005;;;Staking Reward;f0003;API;Bitpanda
+03.01.2024 12:00:00;Bitpanda Depot - Main;Trade;EUR;100;BTC;0.00214902;;;;f0004;API;Bitpanda
+04.01.2024 14:00:00;Bitpanda Depot - Main;Trade;BTC;0.0009;EUR;49.17;;;;f0005;API;Bitpanda
+05.01.2024 16:00:00;Kraken _;Trade;Laptop;4.95974;BCH;0.0229602;;;Swap;f0006;API;Kraken
+06.01.2024 08:00:00;Kraken _;Trade;EUR;99.9998;BTC;0.0019685;KFEE;28.51;;f0007;API;Kraken
+07.01.2024 10:00:00;Bitpanda Depot - Main;Deposit;;;BCH;0.1;;;;f0008;API;Bitpanda
+08.01.2024 10:00:00;Bitpanda Depot - Main;Withdrawal;BCH;0.05;;;;;f0009;API;Bitpanda
+09.01.2024 10:00:00;Bitpanda Depot - Main;Non-Taxable In;;;EUR;50;;;;f0010;API;Bitpanda
+10.01.2024 10:00:00;Bitpanda Depot - Main;Non-Taxable Out;EUR;20;;;;;f0011;API;Bitpanda
+11.01.2024 10:00:00;Krypto;Cashback;;;CRO;2.5;;;;f0012;API;Krypto
+12.01.2024 10:00:00;Kraken _;Fee;CRO;1.25;;;;;f0013;API;Kraken
+13.01.2024 10:00:00;Krypto;Airdrop;;;USDT;50;USDT;1;fee on receive;f0014;API;Krypto
+this row has no semicolons

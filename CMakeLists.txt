@@ -31,5 +31,7 @@ if(NF_TX_CORE_BUILD_TESTS)
     enable_testing()
     add_executable(NF_Tx_Core_Tests Tests/tests.cpp)
     target_link_libraries(NF_Tx_Core_Tests PRIVATE NF_Tx_Core_core)
+    target_compile_definitions(NF_Tx_Core_Tests PRIVATE
+        NF_TX_CORE_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/Tests/fixtures")
     add_test(NAME unit_tests COMMAND NF_Tx_Core_Tests)
 endif()
