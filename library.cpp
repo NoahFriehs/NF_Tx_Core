@@ -40,7 +40,10 @@ bool init(const std::string &logFilePath, const std::string &loadDirPath) {
     return false;
 }
 
-bool initWithData(const std::vector<std::string> &data, int mode, const std::string &logFilePath) {
+bool initWithData(const std::vector<std::string> &data, int mode,
+                  const std::string &logFilePath, long long parseBudgetMs) {
+
+    TransactionManager::setParseBudgetMs(parseBudgetMs);
 
     FileLog::init(logFilePath, true, FileLog::LOG_DEBUG);
 
@@ -79,6 +82,9 @@ bool initWithData(const std::vector<std::string> &data, int mode, const std::str
     FileLog::i("library", "Processing took " + std::to_string(end) + " milliseconds");
 
     dataHolder.SetTransactionManager(std::move(transactionManager));
+
+    // Release the budget for the next call on this thread.
+    TransactionManager::setParseBudgetMs(0);
 
     // return true if successful
     return dataHolder.isInitialized();
@@ -122,10 +128,18 @@ double getMoneySpent(int walletId) {
 
 
 std::vector<std::string> getWalletsAsStrings() {
-    const auto &wallets = DataHolder::GetInstance().GetTransactionManager()->getWallets();
+    // Regular + outside wallets: transactions may legally reference an
+    // outside wallet's id, and the Kotlin Room layer enforces that as a
+    // foreign key, so the complete set must be exported.
+    auto *tm = DataHolder::GetInstance().GetTransactionManager();
+    const auto &wallets = tm->getWallets();
+    const auto &outWallets = tm->getOutWallets();
     std::vector<std::string> vec;
-    vec.reserve(wallets.size());
+    vec.reserve(wallets.size() + outWallets.size());
     for (const auto &wallet: wallets) {
+        vec.emplace_back(wallet.second.getWalletData()->serializeToXml());
+    }
+    for (const auto &wallet: outWallets) {
         vec.emplace_back(wallet.second.getWalletData()->serializeToXml());
     }
     FileLog::i("library", "Returning " + std::to_string(vec.size()) + " wallets");
@@ -291,6 +305,9 @@ jobjectArray stringsToJArray(JNIEnv *env, const std::vector<std::string> &values
 }
 
 // Read a java.lang.String[] into std::vector<std::string>.
+// The UTF chars must be released (in the inner scope) while the element's
+// local reference is still valid - deleting it first makes
+// ReleaseStringUTFChars touch a popped reference and the runtime aborts.
 bool jArrayToStrings(JNIEnv *env, jobjectArray array, std::vector<std::string> &out) {
     if (array == nullptr) return false;
     jsize len = env->GetArrayLength(array);
@@ -298,9 +315,11 @@ bool jArrayToStrings(JNIEnv *env, jobjectArray array, std::vector<std::string> &
     for (jsize i = 0; i < len; i++) {
         auto element = env->GetObjectArrayElement(array, i);
         if (element == nullptr) continue;
-        ScopedUtfChars utf(env, (jstring) element);
+        {
+            ScopedUtfChars utf(env, (jstring) element);
+            if (utf) out.emplace_back(utf.value());
+        }
         env->DeleteLocalRef(element);
-        if (utf) out.emplace_back(utf.value());
     }
     return true;
 }
@@ -352,13 +371,15 @@ extern "C"
 JNIEXPORT jboolean JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_initWithData(JNIEnv *env, jobject,
                                                                     jobjectArray data,
-                                                                    jint, jint mode, jstring path) {
+                                                                    jint, jint mode,
+                                                                    jstring path,
+                                                                    jlong parseBudgetMs) {
     try {
         std::vector<std::string> lines;
         if (!jArrayToStrings(env, data, lines)) return JNI_FALSE;
         ScopedUtfChars pathChars(env, path);
         if (!pathChars) return JNI_FALSE;
-        return initWithData(lines, mode, pathChars.value()) ? JNI_TRUE : JNI_FALSE;
+        return initWithData(lines, mode, pathChars.value(), parseBudgetMs) ? JNI_TRUE : JNI_FALSE;
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI initWithData failed: " + std::string(e.what()));
         return JNI_FALSE;
