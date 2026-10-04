@@ -18,8 +18,8 @@ private:
 public:
     AssetValue();
 
-    //! Get the price of a symbol
-    double getPrice(const std::string &symbol);
+    //! Get the price of a symbol (0.0 when unknown)
+    double getPrice(const std::string &symbol) const;
 
     //! Load the cache with data
     void

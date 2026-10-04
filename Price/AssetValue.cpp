@@ -8,7 +8,7 @@ AssetValue::AssetValue() : isConnected(true), isRunning(true) {}
 
 class StaticPrices;
 
-double AssetValue::getPrice(const std::string &symbol) {
+double AssetValue::getPrice(const std::string &symbol) const {
     // Implementation details for getting price
 
     if (cache.testCache(symbol)) {
@@ -17,7 +17,10 @@ double AssetValue::getPrice(const std::string &symbol) {
 
     StaticPrices staticPrices;
 
-    return staticPrices.prices[symbol];
+    // find() instead of operator[]: the static table is a read-only fallback
+    // (unknown symbols price at 0.0, same as the old operator[] default).
+    auto it = staticPrices.prices.find(symbol);
+    return it != staticPrices.prices.end() ? it->second : 0.0;
 }
 
 

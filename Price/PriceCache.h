@@ -14,10 +14,10 @@ private:
 
 public:
     //! Check the cache for a symbol
-    double checkCache(const std::string &symbol);
+    double checkCache(const std::string &symbol) const;
 
     //! Check if the cache is valid for a symbol
-    bool testCache(const std::string &symbol);
+    bool testCache(const std::string &symbol) const;
 
     //! Add a price to the cache
     void addPrice(const std::string &symbol, double price);

@@ -110,6 +110,10 @@ std::vector<std::string> getMoneySpentSeries() {
     return DataHolder::GetInstance().GetTransactionManager()->getMoneySpentSeries();
 }
 
+std::vector<std::string> getDailySeries() {
+    return DataHolder::GetInstance().GetTransactionManager()->getDailySeries();
+}
+
 double getTotalValueOfAssets() {
     return DataHolder::GetInstance().GetTransactionManager()->getTotalValueOfAssets();
 }
@@ -438,6 +442,18 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_getMoneySp
         return stringsToJArray(env, getMoneySpentSeries());
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI getMoneySpentSeries failed: " + std::string(e.what()));
+        return nullptr;
+    }
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_getDailySeries(
+        JNIEnv *env, jclass) {
+    try {
+        return stringsToJArray(env, getDailySeries());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getDailySeries failed: " + std::string(e.what()));
         return nullptr;
     }
 }

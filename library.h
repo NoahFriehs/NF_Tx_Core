@@ -62,6 +62,10 @@ double getTotalMoneySpent();
 //! "YYYY-MM;123.45" per month.
 std::vector<std::string> getMoneySpentSeries();
 
+//! \brief Returns the daily accounting series (spent/value/pl/bonus), see
+//! TransactionManager::getDailySeries() for the line format.
+std::vector<std::string> getDailySeries();
+
 //! \brief Returns the total money spent on card.
 double getTotalMoneySpentCard();
 

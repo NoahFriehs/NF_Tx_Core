@@ -42,6 +42,8 @@ bool Wallet::addTransaction(BaseTransaction &transaction, bool overrideTTS) {
     balance += transaction.getAmount();
     moneySpent += transaction.getNativeAmount();
     bonusBalance += transaction.getAmountBonus();
+    ledger.push_back({transaction.getAmount(), transaction.getNativeAmount(),
+                      transaction.getAmountBonus()});
     return true;
 }
 
@@ -53,6 +55,7 @@ bool Wallet::withdraw(BaseTransaction &transaction) {
     transactions.push_back(transaction);
     balance -= transaction.getAmount();
     moneySpent -= transaction.getNativeAmount();
+    ledger.push_back({-transaction.getAmount(), -transaction.getNativeAmount(), 0.0L});
     return true;
 }
 
@@ -85,6 +88,8 @@ void Wallet::addToTransaction(BaseTransaction &transaction) {
     balance += transaction.getToAmount();
     moneySpent += transaction.getNativeAmount();
     bonusBalance += transaction.getAmountBonus();
+    ledger.push_back({transaction.getToAmount(), transaction.getNativeAmount(),
+                      transaction.getAmountBonus()});
 }
 
 std::unique_ptr<WalletData> Wallet::getWalletData() const {
@@ -162,7 +167,12 @@ void Wallet::removeTransaction(BaseTransaction &transaction) {
             moneySpent -= tx.getNativeAmount();
             bonusBalance -= tx.getAmountBonus();
             transactions.erase(transactions.begin() + static_cast<long>(i));
+            ledger.erase(ledger.begin() + static_cast<long>(i));
             return;
         }
     }
+}
+
+std::vector<LedgerDelta> Wallet::getLedger() const {
+    return ledger;
 }

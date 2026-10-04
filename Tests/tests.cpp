@@ -1211,6 +1211,122 @@ static void testMoneySpentSeries() {
     CHECK(std::abs(sum - direct) < 1e-6L);
 }
 
+static void testDailySeries() {
+    SECTION("getDailySeries replays the ledgers into the four card-consistent series");
+    // Signed CDC amounts: the withdrawal row debits the inner BTC wallet and
+    // credits the OUTSIDE wallet (out of the inner-wallet scope). The
+    // interest row moves into the bonus balance via setAmountToAmountBonus.
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-03-05 12:00:00", "BTC", "1", "100", "crypto_purchase"),
+            cdcLine("2023-03-20 12:00:00", "ETH", "2", "50", "crypto_purchase"),
+            cdcLine("2023-04-01 12:00:00", "ETH", "3", "75", "crypto_purchase"),
+            cdcLine("2023-04-10 12:00:00", "BTC", "-1", "-20", "crypto_withdrawal"),
+            cdcLine("2023-04-12 12:00:00", "BTC", "0.5", "10", "crypto_earn_interest_paid"),
+    };
+    auto tm = buildTmFromCdcLines(data);
+    const auto &curs = tm->getCurrencies();
+    std::vector<double> prices(curs.size(), 0.0);
+    for (size_t i = 0; i < curs.size(); i++) {
+        if (curs[i] == "BTC") prices[i] = 100.0;
+        if (curs[i] == "ETH") prices[i] = 50.0;
+    }
+    tm->setPrices(prices);
+    tm->calculateWalletBalances();
+
+    auto rows = tm->getDailySeries();
+    CHECK(rows.size() == 20); // 5 active days x 4 series
+    // std::to_string doubles: 6 fixed decimals (same convention as
+    // getMoneySpentSeries).
+    CHECK(rows.front() == "spent;2023-03-05;100.000000");
+
+    // Collect the per-day points and check the exact expected values.
+    std::map<std::string, long double> spent, value, pl, bonus;
+    std::string currentDay;
+    bool firstDayRow = true;
+    size_t orderInDay = 0;
+    for (const auto &row: rows) {
+        // "series;YYYY-MM-DD;value"
+        auto i1 = row.find(';');
+        auto i2 = row.find(';', i1 + 1);
+        CHECK(i1 != std::string::npos && i2 != std::string::npos);
+        std::string series = row.substr(0, i1);
+        std::string key = row.substr(i1 + 1, i2 - i1 - 1);
+        long double v = std::stold(row.substr(i2 + 1));
+        std::map<std::string, long double> *target = nullptr;
+        size_t order = 1; // spent=0, value=1, pl=2, bonus=3
+        if (series == "spent") {
+            target = &spent;
+            order = 0;
+        } else if (series == "value") {
+            target = &value;
+        } else if (series == "pl") {
+            target = &pl;
+            order = 2;
+        } else if (series == "bonus") {
+            target = &bonus;
+            order = 3;
+        } else {
+            CHECK(false);
+            continue;
+        }
+        if (key != currentDay) {
+            currentDay = key;
+            firstDayRow = true;
+        }
+        // The four rows of one day keep spent..bonus order and days rise.
+        CHECK(firstDayRow ? order == 0 : order > orderInDay);
+        firstDayRow = false;
+        orderInDay = order;
+        (*target)[key] = v;
+    }
+    CHECK(spent["2023-03-05"]== 100.0L);
+    CHECK(value["2023-03-05"]== 100.0L); // 1 BTC x 100
+    CHECK(pl["2023-03-05"]== 0.0L);
+    CHECK(bonus["2023-03-05"]== 0.0L);
+    CHECK(spent["2023-03-20"]== 50.0L);
+    CHECK(value["2023-03-20"]== 200.0L); // 1 BTC + 2 ETH
+    CHECK(pl["2023-03-20"]== 50.0L); // 200 - 150
+    CHECK(spent["2023-04-01"]== 75.0L);
+    CHECK(value["2023-04-01"]== 350.0L); // 1 BTC + 5 ETH
+    CHECK(spent["2023-04-10"]== -20.0L);
+    CHECK(value["2023-04-10"]== 250.0L); // 0 BTC + 5 ETH
+    CHECK(pl["2023-04-10"]== 45.0L); // 250 - (225 - 20)
+    CHECK(spent["2023-04-12"]== 10.0L);
+    CHECK(value["2023-04-12"]== 300.0L); // 0.5 BTC + 5 ETH
+    CHECK(pl["2023-04-12"]== 85.0L); // 300 - 215
+    CHECK(bonus["2023-04-12"]== 50.0L); // 0.5 BTC x 100
+
+    // Telescoping: the series must land exactly on the card totals.
+    long double spentSum = 0;
+    for (const auto &entry: spent) spentSum += entry.second;
+    CHECK_NEAR(static_cast<double>(spentSum), tm->getTotalMoneySpent(), 1e-9);
+    CHECK_NEAR(static_cast<double>(value["2023-04-12"]),
+               tm->getTotalValueOfAssets(), 1e-9);
+    CHECK_NEAR(static_cast<double>(bonus["2023-04-12"]),
+               tm->getTotalBonus(), 1e-9);
+    CHECK_NEAR(static_cast<double>(pl["2023-04-12"]),
+               tm->getTotalValueOfAssets() - tm->getTotalMoneySpent(), 1e-9);
+
+    // An unsorted file yields the same daily series (chronological replay):
+    {
+        std::vector<std::string> shuffled = data; // header at 0, lines at 1..5
+        // Reorder the data lines so the file order no longer matches the dates.
+        std::swap(shuffled[3], shuffled[5]);
+        std::swap(shuffled[2], shuffled[4]);
+        auto tmShuffled = buildTmFromCdcLines(shuffled); // same currencies
+        tmShuffled->setPrices(prices);
+        tmShuffled->calculateWalletBalances();
+        CHECK(tmShuffled->getDailySeries() == rows);
+    }
+
+    // An empty manager yields no series lines.
+    {
+        auto empty = std::make_unique<TransactionManager>();
+        CHECK(empty->getDailySeries().empty());
+    }
+}
+
 static void testParseBudget() {
     // B22: a hard wall-clock budget must abort a pathological parse instead of
     // wedging the single JNI thread. Negative budget = already expired.
@@ -1263,6 +1379,7 @@ int main() {
     testXmlSerialization();
     testFileLogLevels();
     testMoneySpentSeries();
+    testDailySeries();
     testParseBudget();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,

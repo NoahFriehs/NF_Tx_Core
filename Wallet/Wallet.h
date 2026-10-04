@@ -9,6 +9,18 @@
 #include "../Transaction/BaseTransaction.h"
 #include "WalletStruct.h"
 
+//!
+//! What one applied transaction actually did to the wallet's running
+//! totals. Recorded alongside the stored transaction (see Wallet::ledger),
+//! because the applied delta depends on the apply path (addTransaction /
+//! withdraw / addToTransaction) and is not derivable from the stored
+//! transaction alone.
+struct LedgerDelta {
+    long double balance = 0.0; // applied to balance
+    long double spent = 0.0;   // applied to moneySpent
+    long double bonus = 0.0;   // applied to bonusBalance
+};
+
 class Wallet {
 public:
     Wallet();
@@ -64,6 +76,9 @@ public:
     //! Add a to transaction
     void addToTransaction(BaseTransaction &transaction);
 
+    //! The applied deltas, parallel to getTransactions() (same order).
+    std::vector<LedgerDelta> getLedger() const;
+
     //! Return WalletData
     std::unique_ptr<WalletData> getWalletData() const;
 
@@ -90,6 +105,7 @@ private:
     long double moneySpent{};
     bool isOutsideWallet{};
     std::string notes;
+    std::vector<LedgerDelta> ledger = {}; // parallel to `transactions`
 
     inline static std::atomic<int> walletIdCounter{0}; // shared across all wallets
 };

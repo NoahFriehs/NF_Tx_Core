@@ -520,6 +520,100 @@ std::vector<std::string> TransactionManager::getMoneySpentSeries() const {
     return out;
 }
 
+namespace {
+//! Date key "YYYY-MM-DD", lexicographically chronological.
+std::string dayKey(const std::tm &date) {
+    std::ostringstream key;
+    key << (date.tm_year + 1900) << '-'
+        << std::setw(2) << std::setfill('0') << (date.tm_mon + 1) << '-'
+        << std::setw(2) << (date.tm_mday);
+    return key.str();
+}
+
+bool tmBefore(const std::tm &a, const std::tm &b) {
+    if (a.tm_year != b.tm_year) return a.tm_year < b.tm_year;
+    if (a.tm_mon != b.tm_mon) return a.tm_mon < b.tm_mon;
+    if (a.tm_mday != b.tm_mday) return a.tm_mday < b.tm_mday;
+    if (a.tm_hour != b.tm_hour) return a.tm_hour < b.tm_hour;
+    if (a.tm_min != b.tm_min) return a.tm_min < b.tm_min;
+    return a.tm_sec < b.tm_sec;
+}
+
+std::string dailyValue(double v) {
+    return std::to_string(v);
+}
+} // namespace
+
+std::vector<std::string> TransactionManager::getDailySeries() const {
+    // Per day: the flow (money spent) and the per-currency balance/bonus
+    // deltas. A std::map over the date keys iterates chronologically.
+    struct DayState {
+        long double spentFlow = 0.0L;
+        std::map<std::string, long double> balanceDelta;
+        std::map<std::string, long double> bonusDelta;
+    };
+    std::map<std::string, DayState> days;
+
+    for (const auto &entry: wallets) {
+        // Same scope as WalletsBalance::fillFromWalletBalanceMap (inner
+        // fiat wallet excluded).
+        if (entry.first == "EUR") continue;
+        const std::vector<LedgerDelta> ledger = entry.second.getLedger();
+        const auto &txs = entry.second.getTransactions();
+        if (ledger.size() != txs.size()) {
+            FileLog::w("TransactionManager:getDailySeries",
+                       "Ledger out of sync for wallet " + entry.first +
+                       " (" + std::to_string(ledger.size()) + " vs " +
+                       std::to_string(txs.size()) + ")");
+            continue;
+        }
+        // Stable sort by transaction date: the file order must not decide
+        // the running balance within a day.
+        std::vector<size_t> order(txs.size());
+        for (size_t i = 0; i < order.size(); i++) order[i] = i;
+        std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+            return tmBefore(txs[a].getTransactionData().transactionDate,
+                            txs[b].getTransactionData().transactionDate);
+        });
+        for (size_t index: order) {
+            const auto &date = txs[index].getTransactionData().transactionDate;
+            if (date.tm_year <= 0) continue; // no usable date
+            const auto &delta = ledger[index];
+            DayState &day = days[dayKey(date)];
+            day.spentFlow += delta.spent;
+            day.balanceDelta[entry.first] += delta.balance;
+            day.bonusDelta[entry.first] += delta.bonus;
+        }
+    }
+
+    // Carry the running totals over the days and emit the four series.
+    std::vector<std::string> rows;
+    std::map<std::string, long double> runningBalance;
+    std::map<std::string, long double> runningBonus;
+    long double spentSoFar = 0.0L;
+    for (const auto &pair: days) {
+        const std::string &key = pair.first;
+        const DayState &day = pair.second;
+        for (const auto &delta: day.balanceDelta) runningBalance[delta.first] += delta.second;
+        for (const auto &delta: day.bonusDelta) runningBonus[delta.first] += delta.second;
+        spentSoFar += day.spentFlow;
+
+        double value = 0.0; // current prices, same source as the asset card
+        for (const auto &bal: runningBalance)
+            value += static_cast<double>(bal.second) * assetValue.getPrice(bal.first);
+        double bonusValue = 0.0;
+        for (const auto &bal: runningBonus)
+            bonusValue += static_cast<double>(bal.second) * assetValue.getPrice(bal.first);
+
+        rows.push_back("spent;" + key + ";" + dailyValue(static_cast<double>(day.spentFlow)));
+        rows.push_back("value;" + key + ";" + dailyValue(value));
+        rows.push_back("pl;" + key + ";"
+                       + dailyValue(value - static_cast<double>(spentSoFar)));
+        rows.push_back("bonus;" + key + ";" + dailyValue(bonusValue));
+    }
+    return rows;
+}
+
 double TransactionManager::getTotalValueOfAssets() const {
     return walletsBalance.nativeBalance;
 }

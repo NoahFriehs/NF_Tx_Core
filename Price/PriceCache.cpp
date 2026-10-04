@@ -1,20 +1,21 @@
 
 #include "PriceCache.h"
 
-double PriceCache::checkCache(const std::string &symbol) {
+// note: the readers are const (no erasure of stale entries - they simply
+// report -1.0 / false and are replaced on the next addPrice)
+double PriceCache::checkCache(const std::string &symbol) const {
     auto it = cache.find(symbol);
     if (it == cache.end()) {
         return -1.0;
     }
     if (it->second.isOlderThanFiveMinutes()) {
         // Handle cache expiration
-        cache.erase(it);
         return -1.0;
     }
     return it->second.getPrice();
 }
 
-bool PriceCache::testCache(const std::string &symbol) {
+bool PriceCache::testCache(const std::string &symbol) const {
     auto it = cache.find(symbol);
     return it != cache.end() && !it->second.isOlderThanFiveMinutes();
 }

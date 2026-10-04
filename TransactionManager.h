@@ -69,6 +69,21 @@ public:
     //! "YYYY-MM;123.45" per month.
     std::vector<std::string> getMoneySpentSeries() const;
 
+    //!
+    //! Daily accounting series of the inner wallets (EUR excluded, the same
+    //! scope as the money-spent/asset cards via
+    //! WalletsBalance::fillFromWalletBalanceMap), reconstructed by replaying
+    //! the per-wallet ledgers chronologically. One line per active day per
+    //! series, oldest first:
+    //!   "spent;YYYY-MM-DD;v"   money spent during that day (flow)
+    //!   "value;YYYY-MM-DD;v"   total asset value at end of day, EUR at the
+    //!                          current prices (stock)
+    //!   "pl;YYYY-MM-DD;v"      value minus cumulative money spent (stock)
+    //!   "bonus;YYYY-MM-DD;v"   total bonus value at end of day, EUR (stock)
+    //! The last point of value/pl/bonus equals the current card total by
+    //! construction (telescoping: the ledger deltas sum to the wallet state).
+    std::vector<std::string> getDailySeries() const;
+
     //! Return the total money spent on card
     double getTotalMoneySpentCard() const;
 
