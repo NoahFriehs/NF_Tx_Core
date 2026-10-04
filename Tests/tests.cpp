@@ -1184,6 +1184,30 @@ static void testReferencedQuietWalletKept() {
           && tm->getTransactions().front().getWalletId() == wid);
 }
 
+static void testParseBudget() {
+    // B22: a hard wall-clock budget must abort a pathological parse instead of
+    // wedging the single JNI thread. Negative budget = already expired.
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-04-01 12:34:56", "BTC", "1", "100", "crypto_purchase"),
+            cdcLine("2023-04-02 12:34:56", "ETH", "2", "200", "crypto_purchase"),
+    };
+    // Expired budget: the parse loop must abort before taking any line
+    // (the empty result then surfaces as a clean parse failure upstream).
+    TransactionManager::setParseBudgetMs(-1);
+    CHECK(TransactionManager::parseBudgetExceeded());
+    TransactionParser parserAborted(data);
+    parserAborted.parseFromCsv(Mode::CDC);
+    CHECK(parserAborted.getTransactions().empty());
+
+    // No budget: everything parses normally.
+    TransactionManager::setParseBudgetMs(0);
+    CHECK(!TransactionManager::parseBudgetExceeded());
+    auto tmOk = buildTmFromCdcLines(data);
+    CHECK(tmOk->getTransactions().size() == 2);
+    CHECK(tmOk->getWallets().size() == 2);
+}
+
 // ------------------------------------------------------------------ main ---
 
 int main() {
@@ -1211,6 +1235,7 @@ int main() {
     testPriceCache();
     testXmlSerialization();
     testFileLogLevels();
+    testParseBudget();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,
                 g_failures == 1 ? "" : "s");

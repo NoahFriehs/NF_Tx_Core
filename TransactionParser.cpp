@@ -2,6 +2,7 @@
 #include <vector>
 #include <stdexcept>
 #include "TransactionParser.h"
+#include "TransactionManager.h"
 #include "FileLog.h"
 
 TransactionParser::TransactionParser() = default;
@@ -64,6 +65,10 @@ void TransactionParser::parseCDC() {
         data.erase(data.begin());   // remove header row, if needed
 
     for (const auto &item: data) {
+        if (TransactionManager::parseBudgetExceeded()) {
+            FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            break;
+        }
         BaseTransaction transaction;
         try {
             transaction.parseCDC(cleanCsvLine(item));
@@ -94,6 +99,10 @@ void TransactionParser::parseCard() {
         data.erase(data.begin());   // remove header row, if needed
 
     for (const auto &item: data) {
+        if (TransactionManager::parseBudgetExceeded()) {
+            FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            break;
+        }
         BaseTransaction transaction;
         try {
             transaction.parseCard(cleanCsvLine(item));
@@ -125,6 +134,10 @@ void TransactionParser::parseKraken() {
         data.erase(data.begin());   // remove header row, if needed
 
     for (const auto &item: data) {
+        if (TransactionManager::parseBudgetExceeded()) {
+            FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            break;
+        }
         BaseTransaction transaction;
         try {
             transaction.parseKraken(cleanCsvLine(item));
@@ -159,6 +172,10 @@ void TransactionParser::parseBlockPit() {
     }
 
     for (const auto &item: data) {
+        if (TransactionManager::parseBudgetExceeded()) {
+            FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            break;
+        }
         BaseTransaction transaction;
         try {
             transaction.parseBlockPit(cleanCsvLine(item));

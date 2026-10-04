@@ -20,6 +20,19 @@ TransactionManager::TransactionManager(std::vector<BaseTransaction> &transaction
 TransactionManager::~TransactionManager() = default;
 
 
+thread_local long long TransactionManager::t_parseBudgetMs = 0;
+thread_local std::chrono::steady_clock::time_point TransactionManager::t_parseDeadline{};
+
+void TransactionManager::setParseBudgetMs(long long ms) {
+    t_parseBudgetMs = ms;
+    t_parseDeadline = std::chrono::steady_clock::now() +
+                      std::chrono::milliseconds(std::max(0LL, ms));
+}
+
+bool TransactionManager::parseBudgetExceeded() {
+    return t_parseBudgetMs != 0 && std::chrono::steady_clock::now() > t_parseDeadline;
+}
+
 void TransactionManager::processTransactions() {
     std::lock_guard<std::mutex> lock(mutex);
     getCurrenciesFromTxs();
@@ -105,6 +118,10 @@ void TransactionManager::addTransactionsToWallets() {
 }
 
 void TransactionManager::addCardTransactionsToWallets() {
+    if (parseBudgetExceeded()) {
+        FileLog::e("TransactionManager", "Parse budget exceeded: aborting wallet build");
+        return;
+    }
     for (auto &tx: cardTransactions) {
         std::string tt = tx.getTransactionTypeString();
         if (tt == "EUR -> EUR") {
@@ -118,6 +135,10 @@ void TransactionManager::addCardTransactionsToWallets() {
 }
 
 void TransactionManager::addCDCTransactionsToWallets() {
+    if (parseBudgetExceeded()) {
+        FileLog::e("TransactionManager", "Parse budget exceeded: aborting wallet build");
+        return;
+    }
     for (auto &tx: transactions) {
         FileLog::v("TransactionManager", "Adding transaction to wallet: " + tx.getCurrencyType());
         // add transaction to wallet
@@ -184,6 +205,10 @@ void TransactionManager::addCDCTransactionsToWallets() {
 }
 
 void TransactionManager::addBlockPitTransactionsToWallets() {
+    if (parseBudgetExceeded()) {
+        FileLog::e("TransactionManager", "Parse budget exceeded: aborting wallet build");
+        return;
+    }
     // Amounts are signed (see BaseTransaction::parseBlockPit): positive values
     // credit, negative values debit the wallet that owns the asset.
     for (auto &tx: transactions) {

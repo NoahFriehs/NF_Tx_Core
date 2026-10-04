@@ -3,6 +3,7 @@
 #define NF_TX_CORE_TRANSACTIONMANAGER_H
 
 
+#include <chrono>
 #include <vector>
 #include <map>
 #include <mutex>
@@ -27,6 +28,15 @@ public:
     void setFailedLines(size_t n) { failedLines = n; }
 
     size_t getFailedLines() const { return failedLines; }
+
+    //!
+    //! Hard wall-clock budget for the parse/processing running on the
+    //! current thread (milliseconds). 0 = no budget, negative = already
+    //! expired (used to test the abort path). A single pathological export
+    //! must never wedge the (single) JNI thread that runs all of this.
+    static void setParseBudgetMs(long long ms);
+
+    static bool parseBudgetExceeded();
 
     //! Return a snapshot of the serializable state
     TransactionManagerState getTransactionManagerState();
@@ -132,6 +142,9 @@ public:
     int getActiveModes() const;
 
 private:
+    static thread_local long long t_parseBudgetMs;
+    static thread_local std::chrono::steady_clock::time_point t_parseDeadline;
+
     bool hasTxData = false;
     bool hasCardTxData = false;
     mutable std::mutex mutex;
