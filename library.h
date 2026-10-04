@@ -58,6 +58,10 @@ void setPrice(const std::vector<double> &prices);
 //! \brief Returns the total money spent.
 double getTotalMoneySpent();
 
+//! \brief Returns the money spent per calendar month, oldest first:
+//! "YYYY-MM;123.45" per month.
+std::vector<std::string> getMoneySpentSeries();
+
 //! \brief Returns the total money spent on card.
 double getTotalMoneySpentCard();
 

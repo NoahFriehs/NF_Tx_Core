@@ -2,6 +2,8 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <iomanip>
+#include <sstream>
 #include <unordered_set>
 #include "TransactionManager.h"
 #include "FileLog.h"
@@ -492,6 +494,30 @@ const std::vector<BaseTransaction> & TransactionManager::getTransactions() {
 
 double TransactionManager::getTotalMoneySpent() const {
     return walletsBalance.moneySpent;
+}
+
+std::vector<std::string> TransactionManager::getMoneySpentSeries() const {
+    std::map<std::string, long double> months;
+    for (const auto &entry: wallets) {
+        // Same rule as WalletsBalance::fillFromWalletBalanceMap: the inner
+        // fiat (EUR) wallet balances the fiat side of trades but is not
+        // part of the "money spent" card total.
+        if (entry.first == "EUR") continue;
+        for (const auto &tx: entry.second.getTransactions()) {
+            const auto &date = tx.getTransactionData().transactionDate;
+            if (date.tm_year <= 0) continue;
+            std::ostringstream key;
+            key << (date.tm_year + 1900) << '-'
+                << std::setw(2) << std::setfill('0') << (date.tm_mon + 1);
+            months[key.str()] += tx.getNativeAmount();
+        }
+    }
+    std::vector<std::string> out;
+    out.reserve(months.size());
+    for (const auto &month: months) {
+        out.push_back(month.first + ";" + std::to_string(static_cast<double>(month.second)));
+    }
+    return out;
 }
 
 double TransactionManager::getTotalValueOfAssets() const {

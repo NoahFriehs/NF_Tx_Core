@@ -1184,6 +1184,33 @@ static void testReferencedQuietWalletKept() {
           && tm->getTransactions().front().getWalletId() == wid);
 }
 
+static void testMoneySpentSeries() {
+    SECTION("getMoneySpentSeries buckets monthly and sums to the total");
+    auto tm = buildTmFromCdcLines({
+            CDC_HEADER,
+            cdcLine("2023-04-01 12:34:56", "BTC", "1", "100", "crypto_purchase"),
+            cdcLine("2023-04-15 12:34:56", "ETH", "2", "50", "crypto_purchase"),
+            cdcLine("2023-05-02 12:34:56", "BTC", "3", "75", "crypto_purchase"),
+    });
+    auto series = tm->getMoneySpentSeries();
+    CHECK(series.size() == 2);
+    CHECK(series.front().rfind("2023-04;", 0) == 0);
+    CHECK(series.back().rfind("2023-05;", 0) == 0);
+    long double sum = 0;
+    for (const auto &entry: series) {
+        const auto semicolon = entry.find(';');
+        if (semicolon == std::string::npos) continue;
+        sum += std::stold(entry.substr(semicolon + 1));
+    }
+    // Same per-wallet accounting the card total uses (inner wallets, EUR skipped).
+    long double direct = 0;
+    for (const auto &entry: tm->getWallets()) {
+        if (entry.first == "EUR") continue;
+        direct += static_cast<long double>(entry.second.getMoneySpent());
+    }
+    CHECK(std::abs(sum - direct) < 1e-6L);
+}
+
 static void testParseBudget() {
     // B22: a hard wall-clock budget must abort a pathological parse instead of
     // wedging the single JNI thread. Negative budget = already expired.
@@ -1235,6 +1262,7 @@ int main() {
     testPriceCache();
     testXmlSerialization();
     testFileLogLevels();
+    testMoneySpentSeries();
     testParseBudget();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,

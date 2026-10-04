@@ -106,6 +106,10 @@ double getTotalMoneySpent() {
     return DataHolder::GetInstance().GetTransactionManager()->getTotalMoneySpent();
 }
 
+std::vector<std::string> getMoneySpentSeries() {
+    return DataHolder::GetInstance().GetTransactionManager()->getMoneySpentSeries();
+}
+
 double getTotalValueOfAssets() {
     return DataHolder::GetInstance().GetTransactionManager()->getTotalValueOfAssets();
 }
@@ -421,6 +425,20 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalMoneySpent(JNIEnv
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI getTotalMoneySpent failed: " + std::string(e.what()));
         return 0.0;
+    }
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+// The Kotlin side declares this in the companion object, whose compiled name
+// is CoreService$Companion ("00024Companion" mangled in the JNI symbol).
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_getMoneySpentSeries(
+        JNIEnv *env, jclass) {
+    try {
+        return stringsToJArray(env, getMoneySpentSeries());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getMoneySpentSeries failed: " + std::string(e.what()));
+        return nullptr;
     }
 }
 

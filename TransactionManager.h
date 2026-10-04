@@ -63,6 +63,12 @@ public:
     //! Return the total money spent
     double getTotalMoneySpent() const;
 
+    //!
+    //! Same accounting as getTotalMoneySpent (signed native amounts of the
+    //! inner wallets), bucketed by calendar month, oldest first:
+    //! "YYYY-MM;123.45" per month.
+    std::vector<std::string> getMoneySpentSeries() const;
+
     //! Return the total money spent on card
     double getTotalMoneySpentCard() const;
 
