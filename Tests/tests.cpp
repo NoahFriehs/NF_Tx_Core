@@ -1136,7 +1136,7 @@ static void testReferencedQuietWalletKept() {
 // ------------------------------------------------------------------ main ---
 
 int main() {
-    FileLog::init("tests.log", true, 1);   // quiet: errors only go to file
+    FileLog::init("tests.log", true, FileLog::LOG_ERROR);   // quiet: only errors go to file
 
     testSplitString();
     testSplitCsvLine();

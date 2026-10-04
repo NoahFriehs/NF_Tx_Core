@@ -64,6 +64,20 @@ private:
     }
 
 public:
+    //! Log level values. These mirror the `android.util.Log` constants so a
+    //! level chosen on the Kotlin side can cross the JNI boundary unchanged
+    //! (see `library.cpp`, which inits the core with LOG_DEBUG).
+    //!
+    //! The level passed to `init`/`setMaxLogLevel` works like the
+    //! *min* level of `android.util.Log` (log this level and above), despite
+    //! the legacy "max" name: `LOG_VERBOSE` (2) logs everything,
+    //! `LOG_ERROR` (6) only errors.
+    static constexpr int LOG_VERBOSE = 2;
+    static constexpr int LOG_DEBUG = 3;
+    static constexpr int LOG_INFO = 4;
+    static constexpr int LOG_WARN = 5;
+    static constexpr int LOG_ERROR = 6;
+
     //! Initialize the log
     static void
     init(const std::string &logFilename = "", bool logEnabled = true, int maxLogLevel_ = -1) {
@@ -77,11 +91,11 @@ public:
         i("FileLog", "Initialized");
     }
 
-    //! Set the max log level
+    //! Set the min log level (legacy name, see LOG_VERBOSE). The level and
+    //! everything more severe is logged; more verbose levels are dropped.
     static void setMaxLogLevel(int maxLogLevel) {
-        // 0 = nothing, 3 = everything
-        if (maxLogLevel < 0 || maxLogLevel > 3) {
-            std::cerr << "Invalid max log level " << maxLogLevel << std::endl;
+        if (maxLogLevel < LOG_VERBOSE || maxLogLevel > LOG_ERROR) {
+            std::cerr << "Invalid log level " << maxLogLevel << std::endl;
             return;
         }
         if (maxLogLevel != FileLog::maxLogLevel) {
@@ -151,18 +165,12 @@ public:
 
     static std::string logLevelToString(int logLevel) {
         switch (logLevel) {
-            case 2:
-                return "VERBOSE";
-            case 3:
-                return "DEBUG";
-            case 4:
-                return "INFO";
-            case 5:
-                return "WARN";
-            case 6:
-                return "ERROR";
-            default:
-                return "UNKNOWN";
+            case LOG_VERBOSE: return "VERBOSE";
+            case LOG_DEBUG: return "DEBUG";
+            case LOG_INFO: return "INFO";
+            case LOG_WARN: return "WARN";
+            case LOG_ERROR: return "ERROR";
+            default: return "UNKNOWN";
         }
     }
 
@@ -181,46 +189,46 @@ public:
     //! Log a message with the given tag in the VERBOSE log level
     static void v(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
-        if (2 < maxLogLevel) return;  // VERBOSE
+        if (LOG_VERBOSE < maxLogLevel) return;
         std::cout << "VERBOSE " << tag << ": " << message << std::endl;
         if (!isInitialized) return;
-        writeToFile(2, tag, message);
+        writeToFile(LOG_VERBOSE, tag, message);
     }
 
     //! Log a message with the given tag in the DEBUG log level
     static void d(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
-        if (3 < maxLogLevel) return;  // DEBUG
+        if (LOG_DEBUG < maxLogLevel) return;
         std::cout << "DEBUG " << tag << ": " << message << std::endl;
         if (!isInitialized) return;
-        writeToFile(3, tag, message);
+        writeToFile(LOG_DEBUG, tag, message);
     }
 
     //! Log a message with the given tag in the INFO log level
     static void i(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
-        if (4 < maxLogLevel) return;  // INFO
+        if (LOG_INFO < maxLogLevel) return;
         std::cout << "INFO " << tag << ": " << message << std::endl;
         if (!isInitialized) return;
-        writeToFile(4, tag, "Info: " + message);
+        writeToFile(LOG_INFO, tag, "Info: " + message);
     }
 
     //! Log a message with the given tag in the WARN log level
     static void w(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
-        if (5 < maxLogLevel) return;  // WARN
+        if (LOG_WARN < maxLogLevel) return;
         std::cerr << "WARNING " << tag << ": " << message << std::endl;
         if (!isInitialized) return;
-        writeToFile(5, tag, "Warning: " + message);
+        writeToFile(LOG_WARN, tag, "Warning: " + message);
     }
 
     //! Log a message with the given tag in the ERROR log level
     static void e(const std::string &tag, const std::string &message) {
         if (!logIsEnabled) return;
-        if (6 < maxLogLevel) return;  // ERROR
+        if (LOG_ERROR < maxLogLevel) return;
         std::cerr << "ERROR " << tag << ": " << message << std::endl;
         if (!isInitialized) return;
-        writeToFile(6, tag, "Error: " + message);
+        writeToFile(LOG_ERROR, tag, "Error: " + message);
     }
 
 

@@ -18,7 +18,7 @@
 
 bool init(const std::string &logFilePath, const std::string &loadDirPath) {
 
-    FileLog::init(logFilePath, true, 3);
+    FileLog::init(logFilePath, true, FileLog::LOG_DEBUG);
 
     FileLog::i("library", "Initializing...");
 
@@ -42,7 +42,7 @@ bool init(const std::string &logFilePath, const std::string &loadDirPath) {
 
 bool initWithData(const std::vector<std::string> &data, int mode, const std::string &logFilePath) {
 
-    FileLog::init(logFilePath, true, 3);
+    FileLog::init(logFilePath, true, FileLog::LOG_DEBUG);
 
     FileLog::i("library", "Initializing with data, with mode " + std::to_string(mode) + "...");
 
