@@ -206,7 +206,13 @@ void TransactionManager::addBlockPitTransactionsToWallets() {
         switch (tx.getTransactionType()) {
             case crypto_purchase: {
                 // Fiat → crypto purchase (positive amount) or sale (negative
-                // amount): mirrors the CDC purchase accounting.
+                // amount). The fiat side of the trade is the user's fiat
+                // balance on the exchange, so it flows through the SAME
+                // wallet map as the other fiat labels (Transfers In/Out,
+                // Deposits, Withdrawals): purchases debit it, sales credit
+                // it. nativeAmount stays 0 on the fiat row so "Money spent"
+                // (summed over the inner wallets) still reflects only the
+                // crypto wallets' purchase cost.
                 auto *cryptoWallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
                 tx.setWalletId(cryptoWallet->getWalletId());
                 tx.setFromWalletId(cryptoWallet->getWalletId());
@@ -214,13 +220,13 @@ void TransactionManager::addBlockPitTransactionsToWallets() {
                 if (!tx.getToCurrencyType().empty() && tx.getToAmount() > 0) {
                     BaseTransaction fiatTx = tx;
                     fiatTx.setAmount(tx.getToAmount());
-                    fiatTx.setNativeAmount(tx.getToAmount());
-                    auto &fiatWallet = getOrCreateWallet(outWallets, tx.getToCurrencyType());
+                    fiatTx.setNativeAmount(0.0L);
+                    auto &fiatWallet = getOrCreateWallet(wallets, tx.getToCurrencyType());
                     if (tx.getAmount() >= 0) {
-                        // Purchase: the fiat side leaves the outside wallet (like CDC)
+                        // Purchase: the fiat balance is spent
                         fiatWallet.withdraw(fiatTx);
                     } else {
-                        // Sale: the fiat proceeds credit the outside wallet
+                        // Sale: the fiat proceeds land in the balance
                         fiatWallet.addTransaction(fiatTx, false);
                     }
                 }
@@ -233,7 +239,12 @@ void TransactionManager::addBlockPitTransactionsToWallets() {
                 tx.setWalletId(wallet->getWalletId());
                 tx.setFromWalletId(wallet->getWalletId());
                 wallet->addTransaction(tx, false);
-                getOrCreateWallet(outWallets, tx.getCurrencyType()).withdraw(tx);
+                // Fiat rows: the inner fiat wallet IS the "outside" view — no
+                // separate bookkeeping wallet (it only double-counted the row
+                // in the list).
+                if (!BaseTransaction::isFiatCurrency(tx.getCurrencyType())) {
+                    getOrCreateWallet(outWallets, tx.getCurrencyType()).withdraw(tx);
+                }
                 break;
             }
 
@@ -243,7 +254,9 @@ void TransactionManager::addBlockPitTransactionsToWallets() {
                 tx.setWalletId(wallet->getWalletId());
                 tx.setFromWalletId(wallet->getWalletId());
                 wallet->addTransaction(tx, false);
-                getOrCreateWallet(outWallets, tx.getCurrencyType()).withdraw(tx);
+                if (!BaseTransaction::isFiatCurrency(tx.getCurrencyType())) {
+                    getOrCreateWallet(outWallets, tx.getCurrencyType()).withdraw(tx);
+                }
                 break;
             }
 

@@ -125,6 +125,7 @@ private:
     bool isOutsideTransaction = false;
     std::string notes = {};
 
+public:
     //! Check if a currency string represents a fiat currency
     static bool isFiatCurrency(const std::string &currency);
 

@@ -881,7 +881,7 @@ static void testBlockPitManager() {
         CHECK(wallet.getBonusBalance() > 0);
     }
 
-    SECTION("BlockPit trade: crypto credited, fiat leaves the outside wallet");
+    SECTION("BlockPit trade: crypto credited, fiat balance debited");
     {
         std::vector<std::string> data{blockPitHeader(),
                                       bpLine("01.10.2026 21:30:23", "Bitpanda", "Trade", "EUR", "500", "BTC", "0.01")};
@@ -891,25 +891,41 @@ static void testBlockPitManager() {
         CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), 0.01, 1e-9);
         // The fiat cost is tracked on the crypto wallet (like the CDC parser)
         CHECK_NEAR(tm->getWallets().at("BTC").getMoneySpent(), 500.0, 1e-9);
-        // The fiat side is an outside wallet, not a regular crypto wallet
-        CHECK(tm->getWallets().count("EUR") == 0);
-        CHECK(tm->getOutWallets().count("EUR") == 1);
-        CHECK_NEAR(tm->getOutWallets().at("EUR").getBalance(), -500.0, 1e-9);
+        // The fiat side is the user's exchange fiat balance: the inner EUR
+        // wallet is debited (no outside-wallet bookkeeping for trades)
+        CHECK(tm->getWallets().count("EUR") == 1);
+        CHECK_NEAR(tm->getWallets().at("EUR").getBalance(), -500.0, 1e-9);
+        CHECK(tm->getOutWallets().count("EUR") == 0);
     }
 
-    SECTION("BlockPit sale: crypto debited, fiat proceeds credit the outside wallet");
+    SECTION("BlockPit sale: crypto debited, fiat proceeds credit the fiat balance");
     {
         std::vector<std::string> data{blockPitHeader(),
                                       bpLine("01.10.2026 21:30:23", "Bitpanda", "Trade", "BTC", "0.01", "EUR", "500")};
         auto tm = buildTmFromBlockPitLines(data);
-        // The BTC wallet is debited; no phantom inner EUR wallet is created
+        // The BTC wallet is debited
         CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), -0.01, 1e-9);
-        CHECK(tm->getWallets().count("EUR") == 0);
         // The sale reduces the crypto wallet's moneySpent
         CHECK_NEAR(tm->getWallets().at("BTC").getMoneySpent(), -500.0, 1e-9);
-        // The fiat proceeds sit in the outside EUR wallet with a positive balance
-        CHECK(tm->getOutWallets().count("EUR") == 1);
-        CHECK_NEAR(tm->getOutWallets().at("EUR").getBalance(), 500.0, 1e-9);
+        // The fiat proceeds land in the inner EUR wallet with a positive balance
+        CHECK_NEAR(tm->getWallets().at("EUR").getBalance(), 500.0, 1e-9);
+        CHECK(tm->getOutWallets().count("EUR") == 0);
+    }
+
+    SECTION("BlockPit fiat balance nets transfers, deposits and trades");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.01.2026 21:30:23", "Bitpanda", "Non-Taxable In", "", "", "EUR", "1000"),
+                                      bpLine("02.01.2026 21:30:23", "Bitpanda", "Trade", "EUR", "600", "BTC", "0.006"),
+                                      bpLine("03.01.2026 21:30:23", "Bitpanda", "Trade", "BTC", "0.006", "EUR", "700"),
+                                      bpLine("04.01.2026 21:30:23", "Bitpanda", "Withdrawal", "EUR", "300", "", "")};
+        auto tm = buildTmFromBlockPitLines(data);
+        // 1000 in - 600 spent + 700 proceeds - 300 withdrawn = 800
+        CHECK_NEAR(tm->getWallets().at("EUR").getBalance(), 800.0, 1e-9);
+        // Money spent stays the net purchase cost (the fiat rows carry no native amount)
+        CHECK_NEAR(tm->getWallets().at("BTC").getMoneySpent(), 600.0 - 700.0, 1e-9);
+        // Fiat rows must not create a duplicate outside EUR wallet
+        CHECK(tm->getOutWallets().count("EUR") == 0);
     }
 
     SECTION("BlockPit withdrawal debits the asset wallet and credits outside");
