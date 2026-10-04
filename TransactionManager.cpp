@@ -1,4 +1,5 @@
 
+#include <set>
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
@@ -542,18 +543,22 @@ bool tmBefore(const std::tm &a, const std::tm &b) {
 std::string dailyValue(double v) {
     return std::to_string(v);
 }
-} // namespace
 
-std::vector<std::string> TransactionManager::getDailySeries() const {
-    // Per day: the flow (money spent) and the per-currency balance/bonus
-    // deltas. A std::map over the date keys iterates chronologically.
-    struct DayState {
-        long double spentFlow = 0.0L;
-        std::map<std::string, long double> balanceDelta;
-        std::map<std::string, long double> bonusDelta;
-    };
+//! One active day of the inner-wallet replay: the spent flow and the
+//! per-currency balance/bonus deltas applied on that calendar day.
+struct DayState {
+    long double spentFlow = 0.0L;
+    std::map<std::string, long double> balanceDelta;
+    std::map<std::string, long double> bonusDelta;
+};
+
+//! Replay the per-wallet ledgers of the INNER wallets (EUR excluded, the
+//! same scope as WalletsBalance::fillFromWalletBalanceMap) chronologically
+//! into one state per active day. A std::map over the date keys iterates
+//! chronologically.
+std::map<std::string, DayState> buildDailyState(
+        const std::map<std::string, Wallet> &wallets) {
     std::map<std::string, DayState> days;
-
     for (const auto &entry: wallets) {
         // Same scope as WalletsBalance::fillFromWalletBalanceMap (inner
         // fiat wallet excluded).
@@ -561,7 +566,7 @@ std::vector<std::string> TransactionManager::getDailySeries() const {
         const std::vector<LedgerDelta> ledger = entry.second.getLedger();
         const auto &txs = entry.second.getTransactions();
         if (ledger.size() != txs.size()) {
-            FileLog::w("TransactionManager:getDailySeries",
+            FileLog::w("TransactionManager:buildDailyState",
                        "Ledger out of sync for wallet " + entry.first +
                        " (" + std::to_string(ledger.size()) + " vs " +
                        std::to_string(txs.size()) + ")");
@@ -585,6 +590,12 @@ std::vector<std::string> TransactionManager::getDailySeries() const {
             day.bonusDelta[entry.first] += delta.bonus;
         }
     }
+    return days;
+}
+} // namespace
+
+std::vector<std::string> TransactionManager::getDailySeries() const {
+    const std::map<std::string, DayState> days = buildDailyState(wallets);
 
     // Carry the running totals over the days and emit the four series.
     std::vector<std::string> rows;
@@ -610,6 +621,36 @@ std::vector<std::string> TransactionManager::getDailySeries() const {
         rows.push_back("pl;" + key + ";"
                        + dailyValue(value - static_cast<double>(spentSoFar)));
         rows.push_back("bonus;" + key + ";" + dailyValue(bonusValue));
+    }
+    return rows;
+}
+
+std::vector<std::string> TransactionManager::getDailyWalletSeries() const {
+    const std::map<std::string, DayState> days = buildDailyState(wallets);
+    std::vector<std::string> rows;
+    std::map<std::string, long double> runningBalance;
+    std::map<std::string, long double> runningBonus;
+    for (const auto &pair: days) {
+        const DayState &day = pair.second;
+        // Currencies touched on this day (std::set: stable per-day order)
+        std::set<std::string> touched;
+        for (const auto &d: day.balanceDelta) touched.insert(d.first);
+        for (const auto &d: day.bonusDelta) touched.insert(d.first);
+        for (const auto &cur: touched) {
+            const long double balDelta = day.balanceDelta.count(cur)
+                    ? day.balanceDelta.at(cur) : 0.0L;
+            const long double bonusDelta = day.bonusDelta.count(cur)
+                    ? day.bonusDelta.at(cur) : 0.0L;
+            if (balDelta == 0.0L && bonusDelta == 0.0L) continue; // no change
+            runningBalance[cur] += balDelta;
+            runningBonus[cur] += bonusDelta;
+            // Running TOKEN amounts (unpriced): the consumer values each
+            // point with the prices valid at its time (the daily series
+            // above is priced with the current prices only).
+            rows.push_back(cur + ";" + pair.first + ";"
+                            + dailyValue(static_cast<double>(runningBalance[cur])) + ";"
+                            + dailyValue(static_cast<double>(runningBonus[cur])));
+        }
     }
     return rows;
 }

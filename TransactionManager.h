@@ -84,6 +84,18 @@ public:
     //! construction (telescoping: the ledger deltas sum to the wallet state).
     std::vector<std::string> getDailySeries() const;
 
+    //!
+    //! Per-wallet daily series of the inner wallets (same scope as
+    //! getDailySeries), in UNPRICED token amounts: one line per (wallet,
+    //! active day) in which the wallet's totals changed, oldest first:
+    //!   "CURRENCY;YYYY-MM-DD;runningBalance;runningBonus"
+    //! The running values carry over across gaps, so "last line for a
+    //! currency at or before date D" is the position as of D. A consumer
+    //! values each point with the prices valid at that time (historical
+    //! prices for the chart panels); getDailySeries above instead fixes
+    //! the current prices.
+    std::vector<std::string> getDailyWalletSeries() const;
+
     //! Return the total money spent on card
     double getTotalMoneySpentCard() const;
 

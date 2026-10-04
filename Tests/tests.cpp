@@ -1340,6 +1340,48 @@ static void testDailySeries() {
     }
 }
 
+static void testDailyWalletSeries() {
+    SECTION("getDailyWalletSeries: running token amounts per inner wallet");
+    // The viban row is written raw (cdcLine cannot fill the To columns): it
+    // hits the inner EUR wallet (must NOT appear) and the CRO wallet.
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-04-01 12:34:56", "BTC", "1.0", "100", "crypto_purchase"),
+            cdcLine("2023-04-02 09:00:00", "ETH", "2.0", "50", "crypto_purchase"),
+            cdcLine("2023-04-03 08:00:00", "LUNA", "3.0", "5", "crypto_earn_interest_paid"),
+            cdcLine("2023-04-05 09:00:00", "BTC", "-0.5", "100", "crypto_withdrawal"),
+            "2023-04-06 11:00:00,eur buy,EUR,-30,CRO,1.5,USD,30,30,viban_purchase,",
+    };
+    auto tm = buildTmFromCdcLines(data);
+    auto rows = tm->getDailyWalletSeries();
+    // One line per (wallet, active day), chronological, running values.
+    CHECK((rows == std::vector<std::string>({
+            "BTC;2023-04-01;1.000000;0.000000",
+            "ETH;2023-04-02;2.000000;0.000000",
+            "LUNA;2023-04-03;3.000000;3.000000",
+            "BTC;2023-04-05;0.500000;0.000000",   // 1.0 - 0.5, carried over the gap
+            "CRO;2023-04-06;1.500000;0.000000"})));
+    for (const auto &row: rows) CHECK(row.find("EUR;") != 0);   // no EUR lines
+    // Telescoping: the last running point of each currency equals its wallet.
+    std::map<std::string, long double> lastBal, lastBonus;
+    for (const auto &row: rows) {
+        auto p1 = row.find(';');
+        auto p2 = row.find(';', p1 + 1);
+        auto p3 = row.find(';', p2 + 1);
+        lastBal[row.substr(0, p1)] = std::stold(row.substr(p2 + 1, p3 - p2 - 1));
+        lastBonus[row.substr(0, p1)] = std::stold(row.substr(p3 + 1));
+    }
+    for (const auto &entry: tm->getWallets()) {
+        if (entry.first == "EUR") continue;
+        CHECK_NEAR(lastBal[entry.first], entry.second.getBalance(), 1e-12);
+        CHECK_NEAR(lastBonus[entry.first], entry.second.getBonusBalance(), 1e-12);
+    }
+    {
+        auto emptyTm = std::make_unique<TransactionManager>();
+        CHECK(emptyTm->getDailyWalletSeries().empty());
+    }
+}
+
 static void testParseBudget() {
     // B22: a hard wall-clock budget must abort a pathological parse instead of
     // wedging the single JNI thread. Negative budget = already expired.
@@ -1546,6 +1588,7 @@ int main() {
     testFileLogLevels();
     testMoneySpentSeries();
     testDailySeries();
+    testDailyWalletSeries();
     testParseBudget();
     testCdcCryptoFixture();
     testCardFixture();
