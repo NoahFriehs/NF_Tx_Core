@@ -205,17 +205,24 @@ void TransactionManager::addBlockPitTransactionsToWallets() {
 
         switch (tx.getTransactionType()) {
             case crypto_purchase: {
-                // Fiat → crypto purchase: mirrors the CDC purchase accounting.
+                // Fiat → crypto purchase (positive amount) or sale (negative
+                // amount): mirrors the CDC purchase accounting.
                 auto *cryptoWallet = &getOrCreateWallet(wallets, tx.getCurrencyType());
                 tx.setWalletId(cryptoWallet->getWalletId());
                 tx.setFromWalletId(cryptoWallet->getWalletId());
                 cryptoWallet->addTransaction(tx, false);
                 if (!tx.getToCurrencyType().empty() && tx.getToAmount() > 0) {
-                    // The fiat side leaves the outside wallet (like CDC)
                     BaseTransaction fiatTx = tx;
                     fiatTx.setAmount(tx.getToAmount());
                     fiatTx.setNativeAmount(tx.getToAmount());
-                    getOrCreateWallet(outWallets, tx.getToCurrencyType()).withdraw(fiatTx);
+                    auto &fiatWallet = getOrCreateWallet(outWallets, tx.getToCurrencyType());
+                    if (tx.getAmount() >= 0) {
+                        // Purchase: the fiat side leaves the outside wallet (like CDC)
+                        fiatWallet.withdraw(fiatTx);
+                    } else {
+                        // Sale: the fiat proceeds credit the outside wallet
+                        fiatWallet.addTransaction(fiatTx, false);
+                    }
                 }
                 break;
             }

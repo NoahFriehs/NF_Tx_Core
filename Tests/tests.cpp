@@ -824,6 +824,19 @@ static void testBlockPitParser() {
         CHECK(tx.getFeeAsset() == "EUR");
     }
 
+    SECTION("Trade (BTC -> EUR) sale parsing");
+    {
+        auto tx = parseBlockPit("01.10.2026 21:30:23;Bitpanda;Trade;BTC;0.00205761;EUR;499.99;;;Sell BTC;");
+        CHECK(tx.getCurrencyType() == "BTC");
+        CHECK(tx.getTransactionType() == crypto_purchase);
+        // Sale: the crypto wallet is debited, the fiat proceeds are negative
+        // native so the crypto wallet's moneySpent is reduced.
+        CHECK_NEAR(tx.getAmount(), -0.00205761, 1e-8);
+        CHECK(tx.getToCurrencyType() == "EUR");
+        CHECK_NEAR(tx.getToAmount(), 499.99, 1e-6);
+        CHECK_NEAR(tx.getNativeAmount(), -499.99, 1e-6);
+    }
+
     SECTION("Deposit parsing");
     {
         auto tx = parseBlockPit("01.10.2026 21:30:23;Kraken;Deposit;;;XRP;100.00");
@@ -882,6 +895,21 @@ static void testBlockPitManager() {
         CHECK(tm->getWallets().count("EUR") == 0);
         CHECK(tm->getOutWallets().count("EUR") == 1);
         CHECK_NEAR(tm->getOutWallets().at("EUR").getBalance(), -500.0, 1e-9);
+    }
+
+    SECTION("BlockPit sale: crypto debited, fiat proceeds credit the outside wallet");
+    {
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("01.10.2026 21:30:23", "Bitpanda", "Trade", "BTC", "0.01", "EUR", "500")};
+        auto tm = buildTmFromBlockPitLines(data);
+        // The BTC wallet is debited; no phantom inner EUR wallet is created
+        CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), -0.01, 1e-9);
+        CHECK(tm->getWallets().count("EUR") == 0);
+        // The sale reduces the crypto wallet's moneySpent
+        CHECK_NEAR(tm->getWallets().at("BTC").getMoneySpent(), -500.0, 1e-9);
+        // The fiat proceeds sit in the outside EUR wallet with a positive balance
+        CHECK(tm->getOutWallets().count("EUR") == 1);
+        CHECK_NEAR(tm->getOutWallets().at("EUR").getBalance(), 500.0, 1e-9);
     }
 
     SECTION("BlockPit withdrawal debits the asset wallet and credits outside");

@@ -368,6 +368,19 @@ void BaseTransaction::parseBlockPit(const std::string &txString) {
                 nativeAmount = toAmount;
                 transactionTypeString = "crypto_purchase";
                 transactionType = crypto_purchase;
+            } else if (isFiatCurrency(incomingAsset)) {
+                // Sale: the opposite of the purchase above. The crypto wallet is
+                // debited (negative amount) and the fiat proceeds land in the
+                // outside fiat wallet — mirroring the CDC/Kraken convention of
+                // recording a sale as a negative crypto_purchase. A negative
+                // nativeAmount reduces the crypto wallet's moneySpent.
+                currencyType = outgoingAsset;
+                amount = -toAmountValue(outgoingAmountStr);
+                toCurrencyType = incomingAsset;
+                toAmount = toAmountValue(incomingAmountStr);
+                nativeAmount = -toAmount;
+                transactionTypeString = "crypto_purchase";
+                transactionType = crypto_purchase;
             } else {
                 // Crypto-to-crypto swap: +incoming here, -outgoing is applied by
                 // the manager to the outgoing asset's wallet.
