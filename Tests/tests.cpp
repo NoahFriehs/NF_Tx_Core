@@ -432,6 +432,13 @@ static void testManagerRoundTrip() {
     CHECK(tm->checkSavedData(dir));
     CHECK(!TransactionManager().checkSavedData(dir + "definitely_missing/"));
 
+    // Save into a nested directory that does not exist yet: the writer
+    // must create it (Android never pre-creates the save directory).
+    const std::string nested = dir + "nested/does/not/exist/";
+    std::filesystem::remove_all(nested);
+    CHECK(tm->saveData(nested));
+    CHECK(tm->checkSavedData(nested));
+
     TransactionManager loaded;
     loaded.loadData(dir);
     double spentLoaded = 0;

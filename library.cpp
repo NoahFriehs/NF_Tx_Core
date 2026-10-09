@@ -212,8 +212,8 @@ std::string getWalletAsString(int walletId) {
     return wallet->getWalletData()->serializeToXml();
 }
 
-void save(const std::string &filePath) {
-    DataHolder::GetInstance().saveData(filePath);
+bool save(const std::string &filePath) {
+    return DataHolder::GetInstance().saveData(filePath);
 }
 
 void loadData(const std::string &dirPath) {
@@ -610,14 +610,15 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getMoneySpentByWID(JNIEnv
 }
 
 extern "C"
-JNIEXPORT void JNICALL
+JNIEXPORT jboolean JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_save(JNIEnv *env, jobject, jstring path) {
     try {
         ScopedUtfChars pathChars(env, path);
-        if (!pathChars) return;
-        save(pathChars.value());
+        if (!pathChars) return JNI_FALSE;
+        return save(pathChars.value()) ? JNI_TRUE : JNI_FALSE;
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI save failed: " + std::string(e.what()));
+        return JNI_FALSE;
     }
 }
 

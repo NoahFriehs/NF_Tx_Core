@@ -51,11 +51,12 @@ public:
         return initialized_;
     }
 
-    //! Save the data to a directory
-    void saveData(const std::string &dirPath) {
+    //! Save the data to a directory (created if it does not exist yet).
+    //! Returns the result of the underlying TransactionManager::saveData.
+    bool saveData(const std::string &dirPath) {
         std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
         if (!transactionManager) throw std::runtime_error("TransactionManager not initialized");
-        transactionManager->saveData(dirPath);
+        return transactionManager->saveData(dirPath);
     }
 
     //! Load the data from a directory

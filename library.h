@@ -20,8 +20,10 @@ bool init(const std::string &logFilePath, const std::string &loadDirPath);
 bool initWithData(const std::vector<std::string> &data, int mode,
                   const std::string &logFilePath, long long parseBudgetMs);
 
-//! \brief Initializes the library with the given data, mode, log file path and load directory path.
-void save(const std::string &filePath);
+//! \brief Saves the current state to the given directory (created if
+//! missing; dir path with trailing slash). Returns true when the save
+//! succeeded.
+bool save(const std::string &filePath);
 
 //! \brief Loads the saved data from the given dir path.
 void loadData(const std::string &dirPath);

@@ -3,8 +3,10 @@
 #include <stdexcept>
 #include <cstring>
 #include <algorithm>
+#include <filesystem>
 #include <iomanip>
 #include <sstream>
+#include <system_error>
 #include <unordered_set>
 #include "TransactionManager.h"
 #include "FileLog.h"
@@ -824,7 +826,7 @@ Wallet *TransactionManager::getWallet(int walletId) {
 }
 
 
-void TransactionManager::saveData(const std::string &dirPath) {
+bool TransactionManager::saveData(const std::string &dirPath) {
     std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Saving data to dir: " + dirPath);
 
@@ -842,17 +844,30 @@ void TransactionManager::saveData(const std::string &dirPath) {
 
     const auto state = getTransactionManagerState();
 
-    if (!BinaryUtil::writeWalletStore(dirPath + "wallets", walletStructVector) ||
-        !BinaryUtil::writeWalletStore(dirPath + "cardWallets", cardWalletStructVector) ||
-        !BinaryUtil::writeStateFile(dirPath + "state", state)) {
+    // The save layout writes <dirPath> + "wallets" | "cardWallets" | "state",
+    // so the directory (with a trailing slash) must exist. Creating it here
+    // (instead of relying on the caller) keeps every platform - including
+    // Android, where the directory is never created otherwise - working.
+    std::error_code ec;
+    std::filesystem::create_directories(dirPath, ec);
+    if (ec) {
+        FileLog::e("TransactionManager", "Could not create save dir " + dirPath + ": " + ec.message());
+        return false;
+    }
+
+    const bool ok = BinaryUtil::writeWalletStore(dirPath + "wallets", walletStructVector) &&
+                    BinaryUtil::writeWalletStore(dirPath + "cardWallets", cardWalletStructVector) &&
+                    BinaryUtil::writeStateFile(dirPath + "state", state);
+    if (!ok) {
         FileLog::e("TransactionManager", "Saving data failed");
-        return;
+        return false;
     }
     if (upgradedLegacy_) {
         FileLog::i("TransactionManager", "Legacy v2 save files upgraded to format v3");
         upgradedLegacy_ = false;
     }
     FileLog::i("TransactionManager", "Finished saving data");
+    return true;
 }
 
 void TransactionManager::loadData(const std::string &dirPath) {

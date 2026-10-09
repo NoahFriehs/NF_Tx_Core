@@ -141,8 +141,9 @@ public:
     //! that modifies the wallets.
     Wallet *getWallet(int walletId);
 
-    //! Save the data to the given directory
-    void saveData(const std::string &dirPath);
+    //! Save the data to the given directory (created if it does not exist
+    //! yet). Returns true when all three files were written.
+    bool saveData(const std::string &dirPath);
 
     //! Load the data from the given directory
     void loadData(const std::string &dirPath);
