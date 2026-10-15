@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <ctime>
 #include <cstring>
 #include <filesystem>
 #include <functional>
@@ -1347,6 +1348,68 @@ static void testDailySeries() {
     }
 }
 
+static void testSubDailySeries() {
+    SECTION("sub-daily series bucket into fixed slots and carry state across the fromEpoch cut");
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-04-01 06:23:00", "BTC", "1", "100", "crypto_purchase"),
+            cdcLine("2023-04-01 11:59:00", "BTC", "1", "100", "crypto_purchase"),
+            cdcLine("2023-04-01 12:01:00", "ETH", "2", "50", "crypto_purchase"),
+            cdcLine("2023-04-02 00:30:00", "BTC", "-1", "-50", "crypto_withdrawal"),
+    };
+    auto tm = buildTmFromCdcLines(data);
+    tm->calculateWalletBalances();
+
+    // 6h slots: 06:23 + 11:59 both floor to the 06:00-12:00 slot.
+    {
+        auto spent = tm->getSubDailySpentSeries(6 * 3600);
+        CHECK(spent.size() == 3);
+        CHECK(spent[0] == "2023-04-01 06:00;200.000000");
+        CHECK(spent[1] == "2023-04-01 12:00;50.000000");
+        CHECK(spent[2] == "2023-04-02 00:00;-50.000000");
+    }
+    {
+        auto wallet = tm->getSubDailyWalletSeries(6 * 3600);
+        // One line per (slot, currency) that changed; running token state.
+        CHECK(wallet.size() == 3);
+        CHECK(wallet[0] == "BTC;2023-04-01 06:00;2.000000;0.000000");
+        CHECK(wallet[1] == "ETH;2023-04-01 12:00;2.000000;0.000000");
+        CHECK(wallet[2] == "BTC;2023-04-02 00:00;1.000000;0.000000");
+    }
+
+    // 15m slots: 06:23 -> 06:15, 11:59 -> 11:45, 12:01 -> 12:00, 00:30 -> 00:30.
+    {
+        auto spent = tm->getSubDailySpentSeries(15 * 60);
+        CHECK(spent.size() == 4);
+        CHECK(spent[0] == "2023-04-01 06:15;100.000000");
+        CHECK(spent[1] == "2023-04-01 11:45;100.000000");
+        CHECK(spent[2] == "2023-04-01 12:00;50.000000");
+        CHECK(spent[3] == "2023-04-02 00:30;-50.000000");
+    }
+
+    // fromEpoch cut: earlier slots are NOT emitted, but they still fed the
+    // running state (the first emitted BTC row carries the balance of 1,
+    // not -1).
+    {
+        std::tm cut = {};
+        cut.tm_year = 2023 - 1900; cut.tm_mon = 3; cut.tm_mday = 1;
+        cut.tm_hour = 12; cut.tm_min = 0; cut.tm_sec = 0;
+        const long long from = timegm(&cut);
+        auto spent = tm->getSubDailySpentSeries(6 * 3600, from);
+        CHECK(spent.size() == 2);
+        CHECK(spent[0] == "2023-04-01 12:00;50.000000");
+        CHECK(spent[1] == "2023-04-02 00:00;-50.000000");
+        auto wallet = tm->getSubDailyWalletSeries(6 * 3600, from);
+        CHECK(wallet.size() == 2);
+        CHECK(wallet[0] == "ETH;2023-04-01 12:00;2.000000;0.000000");
+        CHECK(wallet[1] == "BTC;2023-04-02 00:00;1.000000;0.000000");
+    }
+
+    // Degenerate input: invalid window sizes give no rows (and no crash).
+    CHECK(tm->getSubDailySpentSeries(0).empty());
+    CHECK(tm->getSubDailyWalletSeries(-5).empty());
+}
+
 static void testDailyWalletSeries() {
     SECTION("getDailyWalletSeries: running token amounts per inner wallet");
     // The viban row is written raw (cdcLine cannot fill the To columns): it
@@ -1595,6 +1658,7 @@ int main() {
     testFileLogLevels();
     testMoneySpentSeries();
     testDailySeries();
+    testSubDailySeries();
     testDailyWalletSeries();
     testParseBudget();
     testCdcCryptoFixture();

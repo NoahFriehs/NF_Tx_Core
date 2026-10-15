@@ -96,6 +96,30 @@ public:
     //! the current prices.
     std::vector<std::string> getDailyWalletSeries() const;
 
+    //!
+    //! Money spent (the same inner-wallet accounting as getDailySeries)
+    //! bucketed into fixed [windowSeconds] slots from the epoch (UTC): one
+    //! line per slot that has activity, oldest first:
+    //!   "YYYY-MM-DD HH:MM;v"   v = money spent during that slot (flow)
+    //! [fromEpoch] (epoch seconds, 0 = no limit) suppresses the emission
+    //! of slots that start before it; earlier activity still accumulates
+    //! the per-wallet running state (which the wallet sibling below emits).
+    std::vector<std::string> getSubDailySpentSeries(
+            int windowSeconds, long long fromEpoch = 0) const;
+
+    //!
+    //! Per-wallet series in UNPRICED token amounts (the windowed sibling of
+    //! getDailyWalletSeries): one line per (wallet, changed slot), oldest
+    //! first:
+    //!   "CURRENCY;YYYY-MM-DD HH:MM;runningBalance;runningBonus"
+    //! The slot is the transaction epoch floored to [windowSeconds]; the
+    //! running values carry over across gaps (and across the [fromEpoch]
+    //! cut, see the spent sibling), so "last line for a currency at or
+    //! before T" is the position as of T. A consumer prices each point with
+    //! the price valid at the slot.
+    std::vector<std::string> getSubDailyWalletSeries(
+            int windowSeconds, long long fromEpoch = 0) const;
+
     //! Return the total money spent on card
     double getTotalMoneySpentCard() const;
 

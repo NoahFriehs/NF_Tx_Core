@@ -4,9 +4,11 @@
 #include <cstring>
 #include <algorithm>
 #include <filesystem>
+#include <functional>
 #include <iomanip>
 #include <sstream>
 #include <system_error>
+#include <ctime>
 #include <unordered_set>
 #include "TransactionManager.h"
 #include "FileLog.h"
@@ -554,12 +556,34 @@ struct DayState {
     std::map<std::string, long double> bonusDelta;
 };
 
+//! Fixed-slot key for sub-daily series: "YYYY-MM-DD HH:MM" (UTC) of the
+//! slot START, the epoch of the transaction floored to [windowSeconds].
+//! The fields of [date] are UTC wall-clock parts (the CSV timestamps are
+//! UTC; stringToTm fills them verbatim), so timegm is the exact inverse
+//! of those parts - no local-timezone conversion anywhere.
+std::string windowKey(const std::tm &date, int windowSeconds) {
+    std::tm utc = date; // timegm must not mutate the caller's struct
+    const time_t epoch = timegm(&utc);
+    if (epoch < 0) return dayKey(date); // no usable time - fall back to the day
+    const long long start = (static_cast<long long>(epoch) / windowSeconds) * windowSeconds;
+    const time_t startSec = static_cast<time_t>(start);
+    const struct tm startUtc = *gmtime(&startSec);
+    std::ostringstream key;
+    key << (startUtc.tm_year + 1900) << '-'
+        << std::setw(2) << std::setfill('0') << (startUtc.tm_mon + 1) << '-'
+        << std::setw(2) << (startUtc.tm_mday) << ' '
+        << std::setw(2) << startUtc.tm_hour << ':'
+        << std::setw(2) << startUtc.tm_min;
+    return key.str();
+}
+
 //! Replay the per-wallet ledgers of the INNER wallets (EUR excluded, the
 //! same scope as WalletsBalance::fillFromWalletBalanceMap) chronologically
-//! into one state per active day. A std::map over the date keys iterates
-//! chronologically.
-std::map<std::string, DayState> buildDailyState(
-        const std::map<std::string, Wallet> &wallets) {
+//! into one state per key (day or fixed slot). A std::map over the keys
+//! iterates chronologically (both key formats sort time-ordered).
+std::map<std::string, DayState> buildWindowState(
+        const std::map<std::string, Wallet> &wallets,
+        const std::function<std::string(const std::tm &)> &keyFn) {
     std::map<std::string, DayState> days;
     for (const auto &entry: wallets) {
         // Same scope as WalletsBalance::fillFromWalletBalanceMap (inner
@@ -568,14 +592,14 @@ std::map<std::string, DayState> buildDailyState(
         const std::vector<LedgerDelta> ledger = entry.second.getLedger();
         const auto &txs = entry.second.getTransactions();
         if (ledger.size() != txs.size()) {
-            FileLog::w("TransactionManager:buildDailyState",
+            FileLog::w("TransactionManager:buildWindowState",
                        "Ledger out of sync for wallet " + entry.first +
                        " (" + std::to_string(ledger.size()) + " vs " +
                        std::to_string(txs.size()) + ")");
             continue;
         }
         // Stable sort by transaction date: the file order must not decide
-        // the running balance within a day.
+        // the running balance within a bucket.
         std::vector<size_t> order(txs.size());
         for (size_t i = 0; i < order.size(); i++) order[i] = i;
         std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
@@ -586,13 +610,33 @@ std::map<std::string, DayState> buildDailyState(
             const auto &date = txs[index].getTransactionData().transactionDate;
             if (date.tm_year <= 0) continue; // no usable date
             const auto &delta = ledger[index];
-            DayState &day = days[dayKey(date)];
+            DayState &day = days[keyFn(date)];
             day.spentFlow += delta.spent;
             day.balanceDelta[entry.first] += delta.balance;
             day.bonusDelta[entry.first] += delta.bonus;
         }
     }
     return days;
+}
+
+std::map<std::string, DayState> buildDailyState(
+        const std::map<std::string, Wallet> &wallets) {
+    return buildWindowState(wallets, &dayKey);
+}
+
+std::map<std::string, DayState> buildWindowState(
+        const std::map<std::string, Wallet> &wallets, int windowSeconds) {
+    return buildWindowState(wallets,
+                            [windowSeconds](const std::tm &d) { return windowKey(d, windowSeconds); });
+}
+
+//! Epoch seconds of a "YYYY-MM-DD HH:MM" window key (UTC parts).
+long long epochOfWindowKey(const std::string &key) {
+    std::tm parts = {};
+    std::istringstream ss(key);
+    ss >> std::get_time(&parts, "%Y-%m-%d %H:%M");
+    if (ss.fail()) return -1;
+    return static_cast<long long>(timegm(&parts));
 }
 } // namespace
 
@@ -649,6 +693,55 @@ std::vector<std::string> TransactionManager::getDailyWalletSeries() const {
             // Running TOKEN amounts (unpriced): the consumer values each
             // point with the prices valid at its time (the daily series
             // above is priced with the current prices only).
+            rows.push_back(cur + ";" + pair.first + ";"
+                            + dailyValue(static_cast<double>(runningBalance[cur])) + ";"
+                            + dailyValue(static_cast<double>(runningBonus[cur])));
+        }
+    }
+    return rows;
+}
+
+std::vector<std::string> TransactionManager::getSubDailySpentSeries(
+        int windowSeconds, long long fromEpoch) const {
+    if (windowSeconds <= 0) return {};
+    const auto windows = buildWindowState(wallets, windowSeconds);
+    std::vector<std::string> rows;
+    for (const auto &pair: windows) {
+        if (pair.second.spentFlow == 0.0L) continue; // no change
+        if (fromEpoch > 0 && epochOfWindowKey(pair.first) < fromEpoch) continue;
+        rows.push_back(pair.first + ";" + dailyValue(static_cast<double>(pair.second.spentFlow)));
+    }
+    return rows;
+}
+
+std::vector<std::string> TransactionManager::getSubDailyWalletSeries(
+        int windowSeconds, long long fromEpoch) const {
+    if (windowSeconds <= 0) return {};
+    const auto windows = buildWindowState(wallets, windowSeconds);
+    std::vector<std::string> rows;
+    std::map<std::string, long double> runningBalance;
+    std::map<std::string, long double> runningBonus;
+    for (const auto &pair: windows) {
+        // Skip emission (NOT accumulation): earlier slots still feed the
+        // running totals, so the first EMITTED row carries the full state.
+        const bool emit = fromEpoch <= 0 || epochOfWindowKey(pair.first) >= fromEpoch;
+        if (!emit) {
+            for (const auto &d: pair.second.balanceDelta) runningBalance[d.first] += d.second;
+            for (const auto &d: pair.second.bonusDelta) runningBonus[d.first] += d.second;
+            continue;
+        }
+        // Currencies touched in this slot (std::set: stable per-slot order)
+        std::set<std::string> touched;
+        for (const auto &d: pair.second.balanceDelta) touched.insert(d.first);
+        for (const auto &d: pair.second.bonusDelta) touched.insert(d.first);
+        for (const auto &cur: touched) {
+            const long double balDelta = pair.second.balanceDelta.count(cur)
+                    ? pair.second.balanceDelta.at(cur) : 0.0L;
+            const long double bonusDelta = pair.second.bonusDelta.count(cur)
+                    ? pair.second.bonusDelta.at(cur) : 0.0L;
+            if (balDelta == 0.0L && bonusDelta == 0.0L) continue; // no change
+            runningBalance[cur] += balDelta;
+            runningBonus[cur] += bonusDelta;
             rows.push_back(cur + ";" + pair.first + ";"
                             + dailyValue(static_cast<double>(runningBalance[cur])) + ";"
                             + dailyValue(static_cast<double>(runningBonus[cur])));
