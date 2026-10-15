@@ -117,6 +117,16 @@ public:
     //! cut, see the spent sibling), so "last line for a currency at or
     //! before T" is the position as of T. A consumer prices each point with
     //! the price valid at the slot.
+    //!
+    //! A LIMITED window ([fromEpoch] > 0) additionally opens with one line
+    //! per currency whose running position is non-zero at the window start:
+    //! the pre-cumulated state at the fromEpoch slot key, BEFORE that slot's
+    //! own deltas. Without it, a position that predates the window would be
+    //! unrecoverable (only CHANGED slots are emitted, and the rows carry
+    //! running values, not deltas). A fully stale export (no activity at or
+    //! after the cut) yields only those opening lines. [fromEpoch] must be
+    //! grid-aligned (a multiple of [windowSeconds]) - the caller floors it;
+    //! [fromEpoch] = 0 emits no opening line (unlimited series unchanged).
     std::vector<std::string> getSubDailyWalletSeries(
             int windowSeconds, long long fromEpoch = 0) const;
 

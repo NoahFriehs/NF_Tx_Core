@@ -1388,8 +1388,9 @@ static void testSubDailySeries() {
     }
 
     // fromEpoch cut: earlier slots are NOT emitted, but they still fed the
-    // running state (the first emitted BTC row carries the balance of 1,
-    // not -1).
+    // running state. The LIMITED wallet window additionally opens with the
+    // state carried in from before the cut (BTC held 2.0), at the
+    // fromEpoch slot key.
     {
         std::tm cut = {};
         cut.tm_year = 2023 - 1900; cut.tm_mon = 3; cut.tm_mday = 1;
@@ -1400,14 +1401,127 @@ static void testSubDailySeries() {
         CHECK(spent[0] == "2023-04-01 12:00;50.000000");
         CHECK(spent[1] == "2023-04-02 00:00;-50.000000");
         auto wallet = tm->getSubDailyWalletSeries(6 * 3600, from);
-        CHECK(wallet.size() == 2);
-        CHECK(wallet[0] == "ETH;2023-04-01 12:00;2.000000;0.000000");
-        CHECK(wallet[1] == "BTC;2023-04-02 00:00;1.000000;0.000000");
+        CHECK(wallet.size() == 3);
+        CHECK(wallet[0] == "BTC;2023-04-01 12:00;2.000000;0.000000"); // opening line
+        CHECK(wallet[1] == "ETH;2023-04-01 12:00;2.000000;0.000000");
+        CHECK(wallet[2] == "BTC;2023-04-02 00:00;1.000000;0.000000");
     }
 
     // Degenerate input: invalid window sizes give no rows (and no crash).
     CHECK(tm->getSubDailySpentSeries(0).empty());
     CHECK(tm->getSubDailyWalletSeries(-5).empty());
+}
+
+static void testSubDailyOpeningLine() {
+    SECTION("limited sub-daily window opens with the state carried in from before the cut");
+    // Main dataset (6h slots, cut 2023-03-15 00:00 UTC):
+    //  ETH bought well before the cut, then CLOSED before the cut,
+    //  BTC bought before the cut, one withdrawal INSIDE the window,
+    //  LUNA created inside the window (earn, balance+bonus).
+    auto buildMain = []() {
+        std::vector<std::string> data{
+                CDC_HEADER,
+                cdcLine("2023-02-10 09:00:00", "ETH", "3", "60", "crypto_purchase"),
+                cdcLine("2023-03-01 10:00:00", "BTC", "2", "200", "crypto_purchase"),
+                cdcLine("2023-03-05 22:00:00", "ETH", "-3", "-60", "crypto_withdrawal"),
+                cdcLine("2023-03-16 07:00:00", "BTC", "-1", "-100", "crypto_withdrawal"),
+                cdcLine("2023-03-18 12:30:00", "LUNA", "2", "4", "crypto_earn_interest_paid"),
+        };
+        auto tm = buildTmFromCdcLines(data);
+        tm->calculateWalletBalances();
+        return tm;
+    };
+    auto cutAt = [](int year, int month, int day) {
+        std::tm cut = {};
+        cut.tm_year = year - 1900; cut.tm_mon = month - 1; cut.tm_mday = day;
+        cut.tm_hour = 0; cut.tm_min = 0; cut.tm_sec = 0;
+        return timegm(&cut);
+    };
+    const long long march15 = cutAt(2023, 3, 15);
+    const long long march01 = cutAt(2023, 3, 1);
+
+    // Held position (BTC) gets the opening line at the fromEpoch slot key;
+    // the changed slot inside the window continues from it (2 - 1 = 1).
+    // The closed currency (ETH) and the zero-at-cut currency (LUNA) do not
+    // get opening lines.
+    {
+        auto tm = buildMain();
+        auto rows = tm->getSubDailyWalletSeries(6 * 3600, march15);
+        CHECK(rows.size() == 3);
+        CHECK(rows[0] == "BTC;2023-03-15 00:00;2.000000;0.000000");
+        CHECK(rows[1] == "BTC;2023-03-16 06:00;1.000000;0.000000");
+        CHECK(rows[2] == "LUNA;2023-03-18 12:00;2.000000;2.000000");
+    }
+
+    // A transaction EXACTLY at the cut: the opening line is the state
+    // BEFORE it (4.0), the changed-slot line in the same slot is after (3.0).
+    {
+        std::vector<std::string> data{
+                CDC_HEADER,
+                cdcLine("2023-03-01 10:00:00", "BTC", "4", "120", "crypto_purchase"),
+                cdcLine("2023-03-15 00:00:00", "BTC", "-1", "-30", "crypto_withdrawal"),
+        };
+        auto tm = buildTmFromCdcLines(data);
+        auto rows = tm->getSubDailyWalletSeries(6 * 3600, march15);
+        CHECK(rows.size() == 2);
+        CHECK(rows[0] == "BTC;2023-03-15 00:00;4.000000;0.000000");
+        CHECK(rows[1] == "BTC;2023-03-15 00:00;3.000000;0.000000");
+    }
+
+    // Zero position at the window start (first activity AFTER the cut):
+    // no opening line, the plain changed-slot emission only.
+    {
+        std::vector<std::string> data{
+                CDC_HEADER,
+                cdcLine("2023-03-16 07:00:00", "SOL", "2", "40", "crypto_purchase"),
+        };
+        auto tm = buildTmFromCdcLines(data);
+        auto rows = tm->getSubDailyWalletSeries(6 * 3600, march15);
+        CHECK(rows.size() == 1);
+        CHECK(rows[0] == "SOL;2023-03-16 06:00;2.000000;0.000000");
+    }
+
+    // Fully stale export (everything before the cut): the opening state
+    // stands alone at the fromEpoch slot key.
+    {
+        std::vector<std::string> data{
+                CDC_HEADER,
+                cdcLine("2023-01-05 09:15:00", "BTC", "1.5", "50", "crypto_purchase"),
+        };
+        auto tm = buildTmFromCdcLines(data);
+        auto rows = tm->getSubDailyWalletSeries(6 * 3600, march01);
+        CHECK(rows.size() == 1);
+        CHECK(rows[0] == "BTC;2023-03-01 00:00;1.500000;0.000000");
+    }
+
+    // Bonus-only position (earned, then the balance drawn down to zero):
+    // the opening line carries the bonus with a zero balance.
+    {
+        std::vector<std::string> data{
+                CDC_HEADER,
+                cdcLine("2023-02-20 09:00:00", "LUNA", "2", "4", "crypto_earn_interest_paid"),
+                cdcLine("2023-02-21 10:00:00", "LUNA", "-2", "-4", "crypto_withdrawal"),
+        };
+        auto tm = buildTmFromCdcLines(data);
+        auto rows = tm->getSubDailyWalletSeries(6 * 3600, march01);
+        CHECK(rows.size() == 1);
+        CHECK(rows[0] == "LUNA;2023-03-01 00:00;0.000000;2.000000");
+    }
+
+    // Backward compatibility: fromEpoch = 0 (unlimited) emits NO opening
+    // line - the plain changed-slot series is byte-identical to before.
+    {
+        auto tm = buildMain();
+        auto rows = tm->getSubDailyWalletSeries(6 * 3600);
+        CHECK(rows.size() == 5);
+        CHECK((rows == std::vector<std::string>({
+                "ETH;2023-02-10 06:00;3.000000;0.000000",
+                "BTC;2023-03-01 06:00;2.000000;0.000000",
+                "ETH;2023-03-05 18:00;0.000000;0.000000",
+                "BTC;2023-03-16 06:00;1.000000;0.000000",
+                "LUNA;2023-03-18 12:00;2.000000;2.000000",
+        })));
+    }
 }
 
 static void testDailyWalletSeries() {
@@ -1659,6 +1773,7 @@ int main() {
     testMoneySpentSeries();
     testDailySeries();
     testSubDailySeries();
+    testSubDailyOpeningLine();
     testDailyWalletSeries();
     testParseBudget();
     testCdcCryptoFixture();

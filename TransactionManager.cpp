@@ -561,12 +561,11 @@ struct DayState {
 //! The fields of [date] are UTC wall-clock parts (the CSV timestamps are
 //! UTC; stringToTm fills them verbatim), so timegm is the exact inverse
 //! of those parts - no local-timezone conversion anywhere.
-std::string windowKey(const std::tm &date, int windowSeconds) {
-    std::tm utc = date; // timegm must not mutate the caller's struct
-    const time_t epoch = timegm(&utc);
-    if (epoch < 0) return dayKey(date); // no usable time - fall back to the day
-    const long long start = (static_cast<long long>(epoch) / windowSeconds) * windowSeconds;
-    const time_t startSec = static_cast<time_t>(start);
+//! "YYYY-MM-DD HH:MM" (UTC) of the window STARTING at [startEpoch].
+//! Both key producers share this writer (the tx-time path floors the
+//! transaction epoch, the fromEpoch path is grid-aligned by contract).
+std::string windowKeyFromEpoch(long long startEpoch) {
+    const time_t startSec = static_cast<time_t>(startEpoch);
     const struct tm startUtc = *gmtime(&startSec);
     std::ostringstream key;
     key << (startUtc.tm_year + 1900) << '-'
@@ -575,6 +574,14 @@ std::string windowKey(const std::tm &date, int windowSeconds) {
         << std::setw(2) << startUtc.tm_hour << ':'
         << std::setw(2) << startUtc.tm_min;
     return key.str();
+}
+
+std::string windowKey(const std::tm &date, int windowSeconds) {
+    std::tm utc = date; // timegm must not mutate the caller's struct
+    const time_t epoch = timegm(&utc);
+    if (epoch < 0) return dayKey(date); // no usable time - fall back to the day
+    const long long start = (static_cast<long long>(epoch) / windowSeconds) * windowSeconds;
+    return windowKeyFromEpoch(start);
 }
 
 //! Replay the per-wallet ledgers of the INNER wallets (EUR excluded, the
@@ -714,6 +721,30 @@ std::vector<std::string> TransactionManager::getSubDailySpentSeries(
     return rows;
 }
 
+//! One line per currency with a non-zero running position: the state
+//! BEFORE the cut slot's own deltas, at the fromEpoch slot key. A limited
+//! window needs this opening, because the changed-slot emission carries
+//! running values, not deltas - without the opening a position held before
+//! the window would be unrecoverable (the chart frames end at "now" for
+//! every export, fresh or stale). Zero positions are not carried.
+static void emitSubDailyOpeningState(
+        const std::map<std::string, long double> &runningBalance,
+        const std::map<std::string, long double> &runningBonus,
+        const std::string &key,
+        std::vector<std::string> &rows) {
+    std::set<std::string> held; // stable alphabetical order
+    for (const auto &d: runningBalance) held.insert(d.first);
+    for (const auto &d: runningBonus) held.insert(d.first);
+    for (const auto &cur: held) {
+        const long double balance = runningBalance.count(cur) ? runningBalance.at(cur) : 0.0L;
+        const long double bonus = runningBonus.count(cur) ? runningBonus.at(cur) : 0.0L;
+        if (balance == 0.0L && bonus == 0.0L) continue;
+        rows.push_back(cur + ";" + key + ";"
+                        + dailyValue(static_cast<double>(balance)) + ";"
+                        + dailyValue(static_cast<double>(bonus)));
+    }
+}
+
 std::vector<std::string> TransactionManager::getSubDailyWalletSeries(
         int windowSeconds, long long fromEpoch) const {
     if (windowSeconds <= 0) return {};
@@ -721,6 +752,7 @@ std::vector<std::string> TransactionManager::getSubDailyWalletSeries(
     std::vector<std::string> rows;
     std::map<std::string, long double> runningBalance;
     std::map<std::string, long double> runningBonus;
+    bool openingEmitted = false;
     for (const auto &pair: windows) {
         // Skip emission (NOT accumulation): earlier slots still feed the
         // running totals, so the first EMITTED row carries the full state.
@@ -729,6 +761,15 @@ std::vector<std::string> TransactionManager::getSubDailyWalletSeries(
             for (const auto &d: pair.second.balanceDelta) runningBalance[d.first] += d.second;
             for (const auto &d: pair.second.bonusDelta) runningBonus[d.first] += d.second;
             continue;
+        }
+        // The limited window opens with the state inherited from before the
+        // cut, at the fromEpoch slot key itself (grid-aligned by contract -
+        // the caller floors it), so a position carried in from before the
+        // window stays visible even when no in-window slot matches it.
+        if (fromEpoch > 0 && !openingEmitted) {
+            openingEmitted = true;
+            emitSubDailyOpeningState(runningBalance, runningBonus,
+                                     windowKeyFromEpoch(fromEpoch), rows);
         }
         // Currencies touched in this slot (std::set: stable per-slot order)
         std::set<std::string> touched;
@@ -746,6 +787,12 @@ std::vector<std::string> TransactionManager::getSubDailyWalletSeries(
                             + dailyValue(static_cast<double>(runningBalance[cur])) + ";"
                             + dailyValue(static_cast<double>(runningBonus[cur])));
         }
+    }
+    // Fully stale export: no slot at or after the cut, the opening state
+    // stands alone (the caller carries it flat across the whole window).
+    if (fromEpoch > 0 && !openingEmitted) {
+        emitSubDailyOpeningState(runningBalance, runningBonus,
+                                 windowKeyFromEpoch(fromEpoch), rows);
     }
     return rows;
 }
