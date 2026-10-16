@@ -15,12 +15,15 @@
 #include <functional>
 #include <fstream>
 #include <iostream>
+#include <atomic>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../BinaryUtil.h"
 #include "../FileLog.h"
+#include "../Price/AssetValue.h"
 #include "../Price/PriceCache.h"
 #include "../Price/StaticPrices.h"
 #include "../Structs.h"
@@ -1590,6 +1593,227 @@ static void testParseBudget() {
     CHECK(tmOk->getWallets().size() == 2);
 }
 
+static void testXmlRoundTrip() {
+    SECTION("XML round trip: serializeToXml -> deserializeFromXml");
+    // The deserialization side used to be unexercised (only the ASan
+    // dangling-node serialization check existed); both structs must come
+    // back field-for-field, including the awkward ones.
+    TransactionData tx;
+    tx.transactionId = 12;
+    tx.walletId = 3;
+    tx.fromWalletId = 5;
+    tx.description = "round trip test";
+    tx.transactionDate = TimestampConverter::stringToTm("2024-02-29 01:02:03");
+    tx.currencyType = "BTC";
+    tx.toCurrencyType = "EUR";
+    tx.feeAsset = "ETH";
+    tx.amount = -0.5L;             // signed (debit) survives
+    tx.toAmount = 99999.987654L;   // 6 decimals = std::to_string precision
+    tx.nativeAmount = 12.345678L;
+    tx.amountBonus = 0.0L;
+    tx.transactionTypeOrdinal = 7;
+    tx.transactionTypeString = "crypto_sale";
+    tx.transactionHash = "abcd1234";
+    tx.isOutsideTransaction = true;
+    tx.notes = "";                 // empty field: prints as <notes/>, parses back empty
+    std::string xml = tx.serializeToXml();
+
+    TransactionData back;
+    back.deserializeFromXml(xml);
+    CHECK(back.transactionId == 12);
+    CHECK(back.walletId == 3);
+    CHECK(back.fromWalletId == 5);
+    CHECK(back.description == tx.description);
+    CHECK(back.transactionDate.tm_year == tx.transactionDate.tm_year);
+    CHECK(back.transactionDate.tm_mon == tx.transactionDate.tm_mon);
+    CHECK(back.transactionDate.tm_mday == 29);
+    CHECK(back.transactionDate.tm_hour == 1);
+    CHECK(back.transactionDate.tm_min == 2);
+    CHECK(back.transactionDate.tm_sec == 3);
+    CHECK(back.currencyType == "BTC");
+    CHECK(back.toCurrencyType == "EUR");
+    CHECK(back.feeAsset == "ETH");
+    CHECK(back.amount == -0.5L);
+    CHECK(back.toAmount == 99999.987654L);
+    CHECK(back.nativeAmount == 12.345678L);
+    CHECK(back.amountBonus == 0.0L);
+    CHECK(back.transactionTypeOrdinal == 7);
+    CHECK(back.transactionTypeString == "crypto_sale");
+    CHECK(back.transactionHash == "abcd1234");
+    CHECK(back.isOutsideTransaction);
+    CHECK(back.notes.empty());
+
+    // A leading XML declaration must be stripped before the field scan.
+    TransactionData back2;
+    back2.deserializeFromXml(std::string("<?xml version='1.0' encoding='UTF-8'?>") + xml);
+    CHECK(back2.transactionId == 12);
+    CHECK(back2.transactionDate.tm_mday == 29);
+    CHECK(back2.amount == -0.5L);
+
+    WalletData w0;
+    w0.walletId = 4;
+    w0.currencyType = "USDT";
+    w0.balance = -12.5;
+    w0.nativeBalance = 300.125;
+    w0.bonusBalance = 0.012345;
+    w0.moneySpent = 777.75;
+    w0.isOutsideWallet = false;
+    w0.notes = "n";
+    WalletData w1;
+    WalletData::deserializeFromXml(WalletData::serializeToXml(w0), w1);
+    CHECK(w1.walletId == 4);
+    CHECK(w1.currencyType == "USDT");
+    CHECK(w1.balance == -12.5);
+    CHECK(w1.nativeBalance == 300.125);
+    CHECK(w1.bonusBalance == 0.012345);
+    CHECK(w1.moneySpent == 777.75);
+    CHECK(!w1.isOutsideWallet);
+    CHECK(w1.notes == "n");
+}
+
+static void testAssetValue() {
+    SECTION("AssetValue: cache hit, static fallback, unknown, mismatched load");
+    // AssetValue (the core's no-internet placeholder price path, compiled
+    // into the app) had no test coverage of its own.
+    AssetValue av;
+    CHECK(av.getPrice("ZZZTEST") == 0.0);     // cache miss + not in the table
+    StaticPrices staticPrices;
+    CHECK(av.getPrice("BTC") == staticPrices.prices.at("BTC"));   // static fallback
+    CHECK(av.getPrice("BTC") > 0.0);
+    av.loadCacheWithData({"BTC"}, {123.456});
+    CHECK(av.getPrice("BTC") == 123.456);     // fresh cache wins over the table
+    // Defensive pairing: only the overlapping prefix of mismatched vectors.
+    av.loadCacheWithData({"AAA1", "AAA2", "AAA3"}, {1.5, 2.5});
+    CHECK(av.getPrice("AAA1") == 1.5);
+    CHECK(av.getPrice("AAA2") == 2.5);
+    CHECK(av.getPrice("AAA3") == 0.0);
+}
+
+static void testParseBudgetWalletBuildAbort() {
+    SECTION("wallet build honours the parse budget (clean abort, no throw)");
+    // The parse-loop abort was covered; the wallet-BUILD re-check (the
+    // "aborting wallet build" path) was not: an expiry between parse and
+    // build must degrade to an empty, still-ready manager, not a throw.
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-04-01 12:34:56", "BTC", "1", "100", "crypto_purchase"),
+            cdcLine("2023-04-02 12:34:56", "ETH", "2", "200", "crypto_purchase"),
+    };
+    TransactionManager::setParseBudgetMs(0);
+    TransactionParser parser(data);
+    parser.parseFromCsv(Mode::CDC);
+    CHECK(parser.getTransactions().size() == 2);
+    TransactionManager::setParseBudgetMs(-1);    // expires before the build
+    auto tm = std::make_unique<TransactionManager>();
+    tm->setTransactions(parser.getTransactions(), Mode::CDC);
+    tm->processTransactions();                   // must not throw
+    CHECK(TransactionManager::parseBudgetExceeded());
+    bool allEmpty = true;
+    for (const auto &ws: tm->getWallets())
+        if (!ws.second.getTransactions().empty()) allEmpty = false;
+    CHECK(allEmpty);                             // nothing attached to any wallet
+    CHECK_NEAR(tm->getTotalMoneySpent(), 0.0, 1e-12);
+    CHECK(tm->isReady());                        // pipeline completed, just with no data
+    // Same payload with a clean budget yields the full state (the abort
+    // changed the outcome, not the data).
+    TransactionManager::setParseBudgetMs(0);
+    auto tmOk = buildTmFromCdcLines(data);
+    int attached = 0;
+    for (const auto &ws: tmOk->getWallets())
+        attached += static_cast<int>(ws.second.getTransactions().size());
+    CHECK(attached == 2);
+}
+
+static void testThreadLocalBudgetIsolation() {
+    SECTION("parse budget is thread_local: an expired budget on one thread cannot starve another");
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-04-01 12:34:56", "BTC", "1", "100", "crypto_purchase"),
+            cdcLine("2023-04-02 12:34:56", "ETH", "2", "200", "crypto_purchase"),
+    };
+    std::atomic<bool> otherAborted{false};
+    std::thread other([&]() {
+        // This thread's deadline is expired; if the budget were process-
+        // global, the main thread's parse below would abort as well.
+        TransactionManager::setParseBudgetMs(-1);
+        TransactionParser p(data);
+        p.parseFromCsv(Mode::CDC);
+        otherAborted = p.getTransactions().empty();
+    });
+    TransactionManager::setParseBudgetMs(0);     // main thread: no budget
+    TransactionParser mainParser(data);
+    mainParser.parseFromCsv(Mode::CDC);
+    CHECK(mainParser.getTransactions().size() == 2);
+    other.join();
+    CHECK(otherAborted.load());
+    TransactionManager::setParseBudgetMs(0);     // leave the main thread clean
+}
+
+static void testThreadStress() {
+    SECTION("thread stress: parallel instances stay consistent, racing re-runs serialize");
+    // The app runs every core op on the single "cpp-core" thread; this is
+    // the further guarantee the core should keep: many independent managers
+    // alive at once (per-manager state must not leak across instances)
+    // and racing processTransactions() calls must serialize through the
+    // manager mutex (no torn wallet-build writes, ASan-clean). Note
+    // processTransactions() is single-use by design — re-runs append to the
+    // ledgers again, so both sides run the SAME number of times.
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-04-01 12:34:56", "BTC", "1", "100", "crypto_purchase"),
+            cdcLine("2023-04-02 12:34:56", "ETH", "2", "50", "crypto_purchase"),
+            cdcLine("2023-04-03 12:34:56", "BTC", "-0.5", "40", "crypto_withdraw"),
+    };
+    auto ref = buildTmFromCdcLines(data);        // reference state, one build
+    const size_t refWallets = ref->getWallets().size();
+    const double refSpent = ref->getTotalMoneySpent();
+
+    std::atomic<int> inconsistent{0};
+    std::vector<std::thread> threads;
+    threads.reserve(4);
+    for (int t = 0; t < 4; ++t) {
+        threads.emplace_back([&inconsistent, &data, refWallets, refSpent]() {
+            for (int i = 0; i < 25; ++i) {
+                auto m = buildTmFromCdcLines(data);
+                if (m->getWallets().size() != refWallets
+                    || std::abs(m->getTotalMoneySpent() - refSpent) > 1e-9)
+                    inconsistent++;
+            }
+        });
+    }
+    for (auto &th: threads) th.join();
+    CHECK(inconsistent.load() == 0);
+
+    // Sequential reference: FOUR processTransactions() runs (the app of
+    // re-runs — deterministic under correct serialization).
+    auto seq = std::make_unique<TransactionManager>();
+    TransactionParser seqParser(data);
+    seqParser.parseFromCsv(Mode::CDC);
+    seq->setTransactions(seqParser.getTransactions(), Mode::CDC);
+    for (int i = 0; i < 4; ++i) seq->processTransactions();
+    const double seqSpent = seq->getTotalMoneySpent();
+
+    std::atomic<bool> threw{false};
+    auto racing = std::make_unique<TransactionManager>();
+    TransactionParser raceParser(data);
+    raceParser.parseFromCsv(Mode::CDC);
+    racing->setTransactions(raceParser.getTransactions(), Mode::CDC);
+    std::vector<std::thread> racers;
+    racers.reserve(4);
+    for (int t = 0; t < 4; ++t) {
+        racers.emplace_back([&racing, &threw]() {
+            try {
+                racing->processTransactions();
+            } catch (...) {
+                threw = true;
+            }
+        });
+    }
+    for (auto &th: racers) th.join();
+    CHECK(!threw.load());
+    CHECK_NEAR(racing->getTotalMoneySpent(), seqSpent, 1e-9);
+}
+
 static void testCdcCryptoFixture() {
     SECTION("fixture: CDC crypto export");
     auto lines = loadFixture("cdc_crypto.csv");
@@ -1776,6 +2000,11 @@ int main() {
     testSubDailyOpeningLine();
     testDailyWalletSeries();
     testParseBudget();
+    testXmlRoundTrip();
+    testAssetValue();
+    testParseBudgetWalletBuildAbort();
+    testThreadLocalBudgetIsolation();
+    testThreadStress();
     testCdcCryptoFixture();
     testCardFixture();
     testKrakenFixture();
