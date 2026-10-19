@@ -1,30 +1,62 @@
 # NF_Tx_Core
 
-A C++ library for managing financial transactions and balances. This library provides functionality to handle wallet
-data, transaction data, and calculate balances. It also includes features for working with crypto and card transactions.
+C++20 core library behind the **CDCsvParser** Android app: the single
+parser + wallet engine for bank / card / crypto CSV exports (Crypto.com
+family, BlockPit, Kraken, custom and default formats). The Android app
+compiles these same sources directly (JNI bridge in `library.cpp`); the
+standalone build serves the unit-test suite and the CLI tester.
 
-## Features
+## What it does
 
-- Initialization with log file path and load directory path
-- Saving and loading data
-- Setting wallet, card wallet, transaction, and card transaction data
-- Calculating balances
-- Retrieving information such as active modes, currencies, and financial metrics
-- Resetting the library
+- **CSV parsing** — header-driven app-type detection, UTF-8 BOM safe,
+  per-line error collection (`lastFailedLines` surfaces the skipped
+  unparsable lines instead of failing the whole import)
+- **Wallet cards & ledgers** — balances, EUR-valued assets, money spent,
+  P/L and rewards, computed by replaying per-wallet ledgers chronologically
+- **Series APIs (consumed by the app charts)** — `getDailySeries`
+  (spent / value / P/L / rewards per day, card scope, valued at current
+  prices) and `getDailyWalletSeries` (per-wallet running token
+  balance/bonus, *unpriced* — the app applies point-in-time prices itself)
+- **Persistence** — portable v3 binary format (explicit byte layout,
+  atomic `.tmp`+rename writes; v2 files still read and upgraded on save)
+  plus XML import/export
+- **Prices** — provider interface, on-disk cache, and the offline static
+  fallback table `Price/StaticPrices.h` (144 entries — single source, the
+  tester includes this file instead of a local copy)
+- **Parse budget** — a hard 120 s thread_local deadline checked in the
+  parser loops and wallet build; an aborted parse is a clean failure
 
-## Usage
+## Layout (abridged)
 
-1. Include the library in your project.
-2. Initialize the library using `init` or `initWithData` functions.
-3. Set required data using corresponding setter functions.
-4. Perform calculations using the provided methods.
-5. Retrieve results using getter functions.
+| Path | Contents |
+|---|---|
+| `library.cpp` / `library.h` | C/JNI API (the Android `CoreService` natives + the tester's dlsym surface) |
+| `Transaction/` | parsers + the C++ transaction model |
+| `Wallet/` | wallet / card ledgers + series building |
+| `Price/` | price providers, caches, static fallback table |
+| `DataHolder.cpp`, `TransactionManager.cpp`, `TransactionParser.cpp` | process state, ledger engine, entry-point parsing |
+| `Tests/` | `tests.cpp` (`NF_Tx_Core_Tests`) + `fixtures/` (4 synthetic CSVs, CRLF) |
 
-## Developed for
+## Build & test
 
-- Linux
-- Android
-- (Windows: works but not tested)
+```bash
+# unit tests (ASan/UBSan build recommended): 516 checks, 0 failures (2026-10-16)
+cmake -S . -B cmake-build-tests -DCMAKE_BUILD_TYPE=Debug && cmake --build -B cmake-build-tests -j8
+cd cmake-build-tests && ctest --output-on-failure   # or: ./NF_Tx_Core_Tests
+
+# shared library the tester dlopens at runtime:
+cmake -S . -B cmake-build-debug && cmake --build -B cmake-build-debug -j8
+# -> cmake-build-debug/libNF_Tx_Core.so
+```
+
+The Android app's `app/src/main/cpp/CMakeLists.txt` is a hand-maintained
+NDK variant of this build (C++20, 16 KB page alignment) — it is never
+synced from this repo and never copied back.
+
+## CI
+
+GitHub Actions (`ci.yml`): ASan/UBSan build + `ctest` + a plain Release
+shared-library build.
 
 ## License
 
