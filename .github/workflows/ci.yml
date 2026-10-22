@@ -27,3 +27,22 @@ jobs:
         run: |
           cmake -B build-shared -S . -DCMAKE_BUILD_TYPE=Release -DNF_TX_CORE_BUILD_TESTS=OFF
           cmake --build build-shared -j"$(nproc)"
+
+      # The tester runs THIS repo's fixtures through the app's exact call
+      # path (initWithData -> getDailyWalletSeries) on the plain Release
+      # library above (no sanitizer noise; the sanitized build/ stays for
+      # the core's own suite). This catches #44-class core regressions
+      # (parse OK, wrong series) in CI instead of on-device.
+      - uses: actions/checkout@v4
+        with:
+          repository: NoahFriehs/NF_Tx_Core_Tester
+          ref: main
+          path: tester
+
+      - name: Run the tester's ctest against the plain release library
+        run: |
+          cmake -B tester/build -S tester \
+            -DNF_TX_CORE_DIR="$GITHUB_WORKSPACE" \
+            -DNF_TX_CORE_SO="$GITHUB_WORKSPACE/build-shared/libNF_Tx_Core.so"
+          cmake --build tester/build -j"$(nproc)"
+          ctest --test-dir tester/build --output-on-failure
