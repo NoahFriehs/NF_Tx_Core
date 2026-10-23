@@ -1569,6 +1569,58 @@ static void testDailyWalletSeries() {
     }
 }
 
+static void testDailyWalletSeriesEdges() {
+    SECTION("getDailyWalletSeries edges: single day, same-day ties, zero-net day, no activity");
+    // Single-day wallet: exactly one point, the inception-referenced value.
+    {
+        std::vector<std::string> data{
+                CDC_HEADER,
+                cdcLine("2023-05-10 08:00:00", "BTC", "2.5", "100", "crypto_purchase"),
+        };
+        auto tm = buildTmFromCdcLines(data);
+        CHECK((tm->getDailyWalletSeries() == std::vector<std::string>({
+                "BTC;2023-05-10;2.500000;0.000000"})));
+    }
+    // Same-day ties: several currencies changing on one day keep a
+    // deterministic row order (day-major, currencies alphabetical within
+    // the day) - re-runs emit byte-identical rows, and the BTC day total
+    // is the running sum of its same-day deltas.
+    {
+        std::vector<std::string> data{
+                CDC_HEADER,
+                cdcLine("2023-05-10 08:00:00", "BTC", "1.0", "100", "crypto_purchase"),
+                cdcLine("2023-05-10 09:00:00", "ETH", "2.0", "50", "crypto_purchase"),
+                cdcLine("2023-05-10 10:00:00", "BTC", "0.5", "50", "crypto_purchase"),
+        };
+        auto tm = buildTmFromCdcLines(data);
+        auto first = tm->getDailyWalletSeries();
+        CHECK((first == tm->getDailyWalletSeries()));   // stable across re-runs
+        CHECK((first == std::vector<std::string>({
+                "BTC;2023-05-10;1.500000;0.000000",
+                "ETH;2023-05-10;2.000000;0.000000"})));
+    }
+    // Zero-net day: a day that returns the balance to the previous running
+    // total emits nothing ("totals changed" is the emission contract).
+    {
+        std::vector<std::string> data{
+                CDC_HEADER,
+                cdcLine("2023-05-10 08:00:00", "BTC", "1.0", "100", "crypto_purchase"),
+                cdcLine("2023-05-10 09:00:00", "BTC", "-1.0", "100", "crypto_withdrawal"),
+        };
+        auto tm = buildTmFromCdcLines(data);
+        CHECK(tm->getDailyWalletSeries().empty());
+    }
+    // No activity at all: a manager that processes without any
+    // transactions (setTransactions refuses the empty set, so this goes
+    // through processTransactions directly) has no wallets and no series.
+    {
+        TransactionManager empty;
+        empty.processTransactions();
+        CHECK(empty.getWallets().empty());
+        CHECK(empty.getDailyWalletSeries().empty());
+    }
+}
+
 static void testParseBudget() {
     // B22: a hard wall-clock budget must abort a pathological parse instead of
     // wedging the single JNI thread. Negative budget = already expired.
@@ -1999,6 +2051,7 @@ int main() {
     testSubDailySeries();
     testSubDailyOpeningLine();
     testDailyWalletSeries();
+    testDailyWalletSeriesEdges();
     testParseBudget();
     testXmlRoundTrip();
     testAssetValue();
