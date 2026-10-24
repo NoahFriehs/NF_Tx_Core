@@ -68,6 +68,17 @@ std::vector<std::string> getMoneySpentSeries();
 //! TransactionManager::getDailySeries() for the line format.
 std::vector<std::string> getDailySeries();
 
+//! NOTE (dlsym surface, linkage caveat): the three per-wallet / sub-daily
+//! series accessors defined in library.cpp (getDailyWalletSeries,
+//! getSubDailySpentSeries, getSubDailyWalletSeries) are NOT declared here
+//! and therefore have C++ linkage — the shared library exports them under
+//! their mangled names (e.g. _Z20getDailyWalletSeriesB5cxx11v on GCC/
+//! Clang, C++11 ABI). The CLI tester dlsyms the mangled names. Do NOT add
+//! C-linkage declarations for them here without also updating the tester
+//! (a declaration in this extern "C" block would silently switch their
+//! linkage and break any mangled-name dlsym); a coordinated plain-name
+//! switch is the clean fix.
+
 //! \brief Returns the total money spent on card.
 double getTotalMoneySpentCard();
 
