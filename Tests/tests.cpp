@@ -23,6 +23,7 @@
 
 #include "../BinaryUtil.h"
 #include "../FileLog.h"
+#include "../library.h"
 #include "../Price/AssetValue.h"
 #include "../Price/PriceCache.h"
 #include "../Price/StaticPrices.h"
@@ -2019,6 +2020,42 @@ static void testBlockPitFixture() {
     CHECK_NEAR(out.at("BCH").getBalance(), -0.05, 1e-12);
 }
 
+// The dlsym surface — the C API the CLI tester loads via dlopen. Pins the
+// C linkage of the three series accessors: taking the addresses below only
+// LINKS if the definitions in library.cpp (compiled into this target)
+// carry C linkage (the extern "C" declarations in library.h). A regression
+// to C++ linkage / mangled exports fails this target's link with an
+// undefined plain symbol — the same failure the tester's plain-name dlsym
+// would hit at runtime.
+static void testDlsymSurfaceLinkage() {
+    SECTION("dlsym surface: series accessors export plain C names");
+    using DailyFn = std::vector<std::string> (*)();
+    using SubDailyFn = std::vector<std::string> (*)(int, long long);
+    const DailyFn daily = getDailyWalletSeries;
+    const SubDailyFn spent = getSubDailySpentSeries;
+    const SubDailyFn wallet = getSubDailyWalletSeries;
+    CHECK(daily != nullptr);
+    CHECK(spent != nullptr);
+    CHECK(wallet != nullptr);
+
+    // Runtime confirmation through the plain symbols, consuming them the
+    // way the tester does (C init -> calculate -> read the series).
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-05-10 08:00:00", "BTC", "2.5", "100", "crypto_purchase"),
+    };
+    CHECK(initWithData(data, Mode::CDC, "tests.log", 0));
+    calculateBalances();
+    CHECK((daily() == std::vector<std::string>({
+            "BTC;2023-05-10;2.500000;0.000000"})));
+    CHECK((spent(6 * 3600, 0) == std::vector<std::string>({
+            "2023-05-10 06:00;100.000000"})));
+    CHECK((wallet(6 * 3600, 0) == std::vector<std::string>({
+            "BTC;2023-05-10 06:00;2.500000;0.000000"})));
+    // Degenerate window: empty, no crash (contract shared with the TM level).
+    CHECK(spent(0, 0).empty());
+}
+
 // ------------------------------------------------------------------ main ---
 
 int main() {
@@ -2062,6 +2099,7 @@ int main() {
     testCardFixture();
     testKrakenFixture();
     testBlockPitFixture();
+    testDlsymSurfaceLinkage();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,
                 g_failures == 1 ? "" : "s");

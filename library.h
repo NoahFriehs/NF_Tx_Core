@@ -68,16 +68,28 @@ std::vector<std::string> getMoneySpentSeries();
 //! TransactionManager::getDailySeries() for the line format.
 std::vector<std::string> getDailySeries();
 
-//! NOTE (dlsym surface, linkage caveat): the three per-wallet / sub-daily
-//! series accessors defined in library.cpp (getDailyWalletSeries,
-//! getSubDailySpentSeries, getSubDailyWalletSeries) are NOT declared here
-//! and therefore have C++ linkage — the shared library exports them under
-//! their mangled names (e.g. _Z20getDailyWalletSeriesB5cxx11v on GCC/
-//! Clang, C++11 ABI). The CLI tester dlsyms the mangled names. Do NOT add
-//! C-linkage declarations for them here without also updating the tester
-//! (a declaration in this extern "C" block would silently switch their
-//! linkage and break any mangled-name dlsym); a coordinated plain-name
-//! switch is the clean fix.
+//! NOTE (dlsym surface contract): the three per-wallet / sub-daily series
+//! accessors below are part of the C API. Declared in this extern "C"
+//! block, the shared library exports them under their PLAIN names and the
+//! CLI tester dlsyms exactly those plain names. Do NOT move their
+//! declarations out of this block: a C++-linkage regression would silently
+//! re-mangle the exports and break the dlsym consumer.
+
+//! \brief Returns the per-wallet daily series (the daily wallet chart
+//! source), see TransactionManager::getDailyWalletSeries() for the line
+//! format.
+std::vector<std::string> getDailyWalletSeries();
+
+//! \brief Returns the money-spent series bucketed into fixed
+//! [windowSeconds] slots, optionally starting at [fromEpoch] (epoch
+//! seconds, 0 = unlimited); see TransactionManager::getSubDailySpentSeries()
+//! for the line format and the window/opening-line contract.
+std::vector<std::string> getSubDailySpentSeries(int windowSeconds, long long fromEpoch);
+
+//! \brief Returns the per-wallet series in UNPRICED token amounts over the
+//! same fixed slots; see TransactionManager::getSubDailyWalletSeries() for
+//! the line format and the [fromEpoch] contract.
+std::vector<std::string> getSubDailyWalletSeries(int windowSeconds, long long fromEpoch);
 
 //! \brief Returns the total money spent on card.
 double getTotalMoneySpentCard();
