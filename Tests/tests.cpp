@@ -155,6 +155,27 @@ static std::vector<std::string> loadFixture(const char *name) {
     return lines;
 }
 
+// XML round-trip helpers for the C set*Data surface (the exact format the
+// app's Firebase restore ships: WalletData/TransactionData serialized to
+// XML strings, deserialized by library.cpp).
+static std::string walletDataXml(int id, const std::string &cur, double balance) {
+    WalletData w;
+    w.walletId = id;
+    w.currencyType = cur;
+    w.balance = balance;
+    w.nativeBalance = balance;
+    return w.serializeToXml();
+}
+
+static std::string txDataXml(int id, const std::string &cur, long double amount) {
+    TransactionData t;
+    t.transactionId = id;
+    t.currencyType = cur;
+    t.amount = amount;
+    t.nativeAmount = amount;
+    return t.serializeToXml();
+}
+
 // ----------------------------------------------------------------- tests ---
 
 static void testSplitString() {
@@ -2020,6 +2041,89 @@ static void testBlockPitFixture() {
     CHECK_NEAR(out.at("BCH").getBalance(), -0.05, 1e-12);
 }
 
+// Import/restore state contract on the C surface — the exact sequence the
+// Firebase restore runs (init -> clearAll -> set*Data). Pins, at the API
+// level the app binds, that the set*Data functions are pure appenders
+// (a second sequence onto a live core accumulates), that clearAll() is
+// the only reset (every container empty, both active-mode flags down,
+// hence getActiveModes()==0), that a set*Data sequence AFTER clearAll is
+// a REPLACE (no residue from the cleared state), and the load-bearing
+// order: clearAll() goes through DataHolder::GetTransactionManager(),
+// which throws without a TM, so it is only safe AFTER init() has created
+// the TM (a reversed order would carry the exception across the C
+// boundary = terminate). Runs before testDlsymSurfaceLinkage on purpose:
+// it starts from the process's cold (never initialized) DataHolder.
+static void testImportStateSemantics() {
+    SECTION("import state: init/clearAll/set*Data contract on the C surface");
+
+    // Cold core: init creates the TM even when there is no saved data to
+    // load (returns false then), and clearAll() must be safe immediately
+    // after it (no-op on an empty TM, no throw across the C boundary).
+    CHECK(!init("tests.log", ""));
+    clearAll();
+    CHECK(getActiveModes() == 0);
+    CHECK(getWalletsAsStrings().empty());
+    CHECK(getTransactionsAsStrings().empty());
+
+    // State A: one crypto wallet + one tx, one card wallet + one card tx.
+    setWalletData({walletDataXml(1, "BTC", 2.5)});
+    setTransactionData({txDataXml(10, "BTC", 2.5)});
+    setCardWalletData({walletDataXml(100, "CRO", 72.0)});
+    setCardTransactionData({txDataXml(20, "EUR", -72.0)});
+    CHECK(getActiveModes() == 3);
+    CHECK(getWalletsAsStrings().size() == 1);
+    CHECK(getWalletsAsStrings()[0].find("<currencyType>BTC</currencyType>")
+          != std::string::npos);
+    CHECK(getTransactionsAsStrings().size() == 1);
+    CHECK(getCardWalletsAsStrings().size() == 1);
+    CHECK(getCardTransactionsAsStrings().size() == 1);
+
+    // APPEND — the as-is contract: a set*Data sequence WITHOUT clearAll
+    // accumulates onto the live state (new wallet keys add, transactions
+    // always append, the monotonic active-mode flags stay on).
+    setWalletData({walletDataXml(2, "ETH", 1.0)});
+    setTransactionData({txDataXml(11, "ETH", 1.0)});
+    setCardWalletData({walletDataXml(101, "VISA", 10.0)});
+    setCardTransactionData({txDataXml(21, "EUR", -10.0)});
+    CHECK(getActiveModes() == 3);
+    CHECK(getWalletsAsStrings().size() == 2);
+    CHECK(getWalletsAsStrings()[0].find("<currencyType>BTC</currencyType>")
+          != std::string::npos);
+    CHECK(getWalletsAsStrings()[1].find("<currencyType>ETH</currencyType>")
+          != std::string::npos);
+    CHECK(getTransactionsAsStrings().size() == 2);
+    CHECK(getCardWalletsAsStrings().size() == 2);
+    CHECK(getCardTransactionsAsStrings().size() == 2);
+
+    // The reset: clearAll() empties every container and drops both
+    // active-mode flags (getActiveModes counts exactly those two).
+    clearAll();
+    CHECK(getActiveModes() == 0);
+    CHECK(getWalletsAsStrings().empty());
+    CHECK(getTransactionsAsStrings().empty());
+    CHECK(getCardWalletsAsStrings().empty());
+    CHECK(getCardTransactionsAsStrings().empty());
+
+    // REPLACE: a set*Data sequence after clearAll rebuilds the state from
+    // its own entries alone — no BTC/ETH (A) or VISA (B) residue.
+    setWalletData({walletDataXml(3, "USDC", 40.0)});
+    setTransactionData({txDataXml(30, "USDC", 40.0)});
+    setCardWalletData({walletDataXml(102, "MC", 5.0)});
+    setCardTransactionData({txDataXml(31, "EUR", -5.0)});
+    CHECK(getActiveModes() == 3);
+    CHECK(getWalletsAsStrings().size() == 1);
+    CHECK(getWalletsAsStrings()[0].find("<currencyType>USDC</currencyType>")
+          != std::string::npos);
+    CHECK(getWalletsAsStrings()[0].find("BTC") == std::string::npos);
+    CHECK(getTransactionsAsStrings().size() == 1);
+    CHECK(getTransactionsAsStrings()[0].find("<transactionId>30</transactionId>")
+          != std::string::npos);
+    CHECK(getCardWalletsAsStrings().size() == 1);
+    CHECK(getCardWalletsAsStrings()[0].find("<currencyType>MC</currencyType>")
+          != std::string::npos);
+    CHECK(getCardTransactionsAsStrings().size() == 1);
+}
+
 // The dlsym surface — the C API the CLI tester loads via dlopen. Pins the
 // C linkage of the three series accessors: taking the addresses below only
 // LINKS if the definitions in library.cpp (compiled into this target)
@@ -2099,6 +2203,7 @@ int main() {
     testCardFixture();
     testKrakenFixture();
     testBlockPitFixture();
+    testImportStateSemantics();
     testDlsymSurfaceLinkage();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,

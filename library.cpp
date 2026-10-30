@@ -744,4 +744,14 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_calculateWalletBalances(J
     }
 }
 
+extern "C"
+JNIEXPORT void JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_clearAll(JNIEnv *, jobject) {
+    try {
+        clearAll();
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI clearAll failed: " + std::string(e.what()));
+    }
+}
+
 #endif // __ANDROID__
