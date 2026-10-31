@@ -495,6 +495,81 @@ static void testManagerRoundTrip() {
     std::filesystem::remove_all(dir);
 }
 
+// The "careful when loading from DB" pin: a relaunched process starts the
+// process-global id counter at 0, so only the counter persisted in the v3
+// state blob keeps a restored core from re-issuing saved ids. This walks the
+// exact load seam (import -> saveData -> fresh process -> loadData -> new
+// import) and asserts the fresh import's ids continue strictly above the
+// saved ones, monotonic and without duplicates.
+// The guarded setter deliberately refuses backwards moves, so the emulation
+// of the process start writes the global directly.
+extern int txIdCounter;
+
+static void testTxIdCounterRoundTrip() {
+    SECTION("txIdCounter round trip: no id reuse after state restore");
+    const std::string dir = (std::filesystem::temp_directory_path() /
+                             "nf_tx_core_txid_roundtrip").string() + "/";
+    std::filesystem::remove_all(dir);
+
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-06-01 10:00:00", "BTC", "1.0", "10", "crypto_purchase"),
+            cdcLine("2023-06-01 11:00:00", "BTC", "2.0", "20", "crypto_purchase"),
+            cdcLine("2023-06-02 10:00:00", "ETH", "1.0", "10", "crypto_purchase"),
+            cdcLine("2023-06-03 10:00:00", "BTC", "3.0", "30", "crypto_purchase"),
+            cdcLine("2023-06-04 10:00:00", "ETH", "1.0", "10", "crypto_purchase")};
+    auto tm = buildTmFromCdcLines(data);
+    CHECK(tm->getTransactions().size() == 5);
+    const int first = tm->getTransactions().front().getTransactionId();
+    const int last = tm->getTransactions().back().getTransactionId();
+    CHECK(last - first == 4);                           // contiguous within the batch
+    CHECK(BaseTransaction::getTxIdCounter() == last + 1);  // counter sits past the batch
+    CHECK(tm->saveData(dir));
+
+    std::set<int> savedIds;
+    for (const auto &tx: tm->getTransactions()) savedIds.insert(tx.getTransactionId());
+
+    // Fresh process: the counter starts at 0 (see the comment above).
+    txIdCounter = 0;
+    CHECK(BaseTransaction::getTxIdCounter() == 0);
+
+    TransactionManager loaded;
+    loaded.loadData(dir);
+    CHECK(BaseTransaction::getTxIdCounter() == last + 1);   // restored by the blob, not 0
+    CHECK(loaded.getTransactions().size() == 5);
+
+    // A new import on top of the restored state: ids unique, monotonic, and
+    // strictly above every saved id (no cross-import duplicates).
+    std::vector<std::string> data2{
+            CDC_HEADER,
+            cdcLine("2023-06-05 10:00:00", "BTC", "1.0", "10", "crypto_purchase"),
+            cdcLine("2023-06-06 10:00:00", "ETH", "2.0", "20", "crypto_purchase")};
+    TransactionParser parser2(data2);
+    parser2.parseFromCsv(Mode::CDC);
+    auto fresh = parser2.getTransactions();
+    CHECK(fresh.size() == 2);
+    for (size_t i = 0; i < fresh.size(); ++i) {
+        CHECK(fresh[i].getTransactionId() > last);
+        CHECK(savedIds.count(fresh[i].getTransactionId()) == 0);
+        if (i > 0) {
+            CHECK(fresh[i].getTransactionId() > fresh[i - 1].getTransactionId());
+        }
+    }
+
+    // A second fresh import in the same process must not collide either.
+    std::vector<std::string> data3{
+            CDC_HEADER,
+            cdcLine("2023-06-07 10:00:00", "BTC", "1.0", "10", "crypto_purchase")};
+    TransactionParser parser3(data3);
+    parser3.parseFromCsv(Mode::CDC);
+    auto second = parser3.getTransactions();
+    CHECK(second.size() == 1);
+    CHECK(second.front().getTransactionId() > fresh.back().getTransactionId());
+    CHECK(savedIds.count(second.front().getTransactionId()) == 0);
+
+    std::filesystem::remove_all(dir);
+}
+
 static void testBinaryUtil() {
     SECTION("binary format v3: portable layout, explicit little-endian");
     const std::string dir =
@@ -1116,6 +1191,49 @@ static void testBlockPitManager() {
         CHECK(tm->getWallets().count("ETH") == 1);
         CHECK(tm->getWallets().count("XRP") == 1);
         CHECK(tm->getTransactions().size() == 3);
+    }
+
+    SECTION("BlockPit deposit credits the asset wallet and debits the outside ledger");
+    {
+        // A synthetic row in the shape of a chain deposit into a cold
+        // wallet (the committed fixture carries the same shape); the pinned
+        // booking is the expectation: the asset wallet is credited, the
+        // outside ledger is debited by the same amount, and the row is
+        // wired to the asset wallet's id.
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("15.03.2025 10:30:00", "Cold Wallet", "Deposit", "", "", "BTC", "0.021547", "", "", "", "", "Manual", "Manual")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK(tm->getWallets().count("BTC") == 1);
+        CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), 0.021547, 1e-12);
+        CHECK_NEAR(tm->getWallets().at("BTC").getMoneySpent(), 0.0, 1e-12);
+        CHECK(tm->getOutWallets().count("BTC") == 1);
+        CHECK_NEAR(tm->getOutWallets().at("BTC").getBalance(), -0.021547, 1e-12);
+        const auto &btc = tm->getWallets().at("BTC");
+        CHECK(btc.getTransactions().size() == 1);
+        CHECK(btc.getTransactions().front().getWalletId() == btc.getWalletId());
+    }
+
+    SECTION("BlockPit fiat deposit stays in the wallet map (no outside entry)");
+    {
+        // A fiat deposit is booked in the inner fiat wallet only - a separate
+        // outside bookkeeping wallet would double-count the row in the list.
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("03.04.2025 09:00:00", "Bank", "Deposit", "", "", "EUR", "51")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK(tm->getWallets().count("EUR") == 1);
+        CHECK_NEAR(tm->getWallets().at("EUR").getBalance(), 51.0, 1e-9);
+        CHECK(tm->getOutWallets().count("EUR") == 0);
+    }
+
+    SECTION("BlockPit deposit fee in the incoming asset nets the credit");
+    {
+        // 51 EUR in, 1 EUR fee, 50 nets into the account: the fee in the
+        // incoming asset nets the credit.
+        std::vector<std::string> data{blockPitHeader(),
+                                      bpLine("03.04.2022 12:00:00", "Binance", "Deposit", "", "", "EUR", "51", "EUR", "1")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK_NEAR(tm->getWallets().at("EUR").getBalance(), 50.0, 1e-9);
+        CHECK(tm->getOutWallets().count("EUR") == 0);
     }
 }
 
@@ -2181,6 +2299,7 @@ int main() {
     testBlockPitManager();
     testCdcWalletSignRegression();
     testManagerRoundTrip();
+    testTxIdCounterRoundTrip();
     testBinaryUtil();
     testUnlimitedPersistence();
     testLegacyV2Migration();
