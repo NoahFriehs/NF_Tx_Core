@@ -2,7 +2,9 @@
 #include "BaseTransaction.h"
 #include "../Util/Util.h"
 
-int txIdCounter;    //TODO: be careful with this when loading from DB
+// Monotonic per process; the v3 state blob restores it via the guarded
+// setter, so a relaunched core never re-issues an id of a saved transaction.
+int txIdCounter;
 
 BaseTransaction::BaseTransaction() = default;
 

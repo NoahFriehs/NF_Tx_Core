@@ -49,9 +49,10 @@ void TransactionManager::processTransactions() {
 
     addTransactionsToWallets();
 
-    removeEmptyWallets(); //TODO: do this not in performance mode
-
-    removeUnusedTransactions(); //TODO: do this not in performance mode (both together take 0.10ms)
+    // Both cleanup passes take ~0.10 ms together, once per import under the
+    // parse budget - there is no performance mode in the core to gate them on.
+    removeEmptyWallets();
+    removeUnusedTransactions();
 
     isReadyFlag = true;
     FileLog::i("TransactionManager", "Finished processing transactions");
