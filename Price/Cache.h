@@ -13,8 +13,14 @@ private:
     std::chrono::time_point<std::chrono::system_clock> creationTime;
 
 public:
-    //! Constructor
+    //! Constructor (timestamps at creation)
     Cache(std::string id, double price);
+
+    //! Constructor with an explicit creation time (test seam for aging an
+    //! entry past the TTL without sleeping - mirrors the Kotlin Cache
+    //! test constructor).
+    Cache(std::string id, double price,
+          std::chrono::time_point<std::chrono::system_clock> creationTime);
 
     //! Check if the cache is valid
     bool isOlderThanFiveMinutes() const;

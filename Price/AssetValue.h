@@ -18,8 +18,13 @@ private:
 public:
     AssetValue();
 
-    //! Get the price of a symbol (0.0 when unknown)
+    //! Get the price of a symbol, hierarchy: fresh (5-minute TTL) ->
+    //! stale (any age) -> static baseline -> 0.0 (unknown)
     double getPrice(const std::string &symbol) const;
+
+    //! Test seam: age a cached entry [ageSeconds] into the past (the
+    //! suite cannot sleep out the 5-minute TTL). No-op when uncached.
+    void ageCacheEntryForTest(const std::string &symbol, long long ageSeconds);
 
     //! Load the cache with data
     void

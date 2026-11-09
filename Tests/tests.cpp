@@ -2071,6 +2071,54 @@ static void testAssetValue() {
     CHECK(av.getPrice("AAA3") == 0.0);
 }
 
+static void testPriceHierarchyReorder() {
+    SECTION("AssetValue: stale (any age) beats the static baseline; getStale sentinel");
+    // The reordered hierarchy: fresh (5-min TTL) -> stale (any age) ->
+    // static baseline -> 0.0, plus the getStale accessor it leans on.
+    PriceCache pc;
+    CHECK_NEAR(pc.getStale("NEVER1"), -1.0, 1e-9);   // never cached: sentinel
+    pc.addPrice("NEVER1", 42.0);
+    CHECK_NEAR(pc.getStale("NEVER1"), 42.0, 1e-9);
+    pc.addPrice("NEVER1", 0.0);                      // a stored "no value" answer
+    CHECK_NEAR(pc.getStale("NEVER1"), 0.0, 1e-9);
+    pc.ageEntryForTest("NEVER1", 301);               // just past the TTL
+    CHECK_NEAR(pc.checkCache("NEVER1"), -1.0, 1e-9); // fresh read now misses
+    CHECK_NEAR(pc.getStale("NEVER1"), 0.0, 1e-9);    // but the stale value survives
+
+    AssetValue av;
+    // TTL-expired entry -> the stale (real) price, NOT the 2023-era
+    // static baseline (the non-triviality guards keep the assertions
+    // from passing against an identical value).
+    StaticPrices table;
+    CHECK(table.prices.at("LTC") != 55.5);
+    av.loadCacheWithData({"LTC"}, {55.5});
+    CHECK_NEAR(av.getPrice("LTC"), 55.5, 1e-12);     // fresh
+    av.ageCacheEntryForTest("LTC", 301);
+    CHECK_NEAR(av.getPrice("LTC"), 55.5, 1e-12);     // stale wins over the table
+    CHECK(av.getPrice("LTC") != table.prices.at("LTC"));
+
+    // A stored 0.0 (the endpoint said "no value") counts as the stale
+    // entry and beats the static table: no invented baseline.
+    CHECK(table.prices.at("BCH") > 0.0);
+    av.loadCacheWithData({"BCH"}, {0.0});
+    av.ageCacheEntryForTest("BCH", 301);
+    CHECK_NEAR(av.getPrice("BCH"), 0.0, 1e-12);
+
+    // Never cached: known symbol -> the static baseline; unknown -> 0.0.
+    CHECK_NEAR(av.getPrice("XRP"), table.prices.at("XRP"), 1e-12);
+    CHECK(av.getPrice("XRP") > 0.0);
+    CHECK_NEAR(av.getPrice("ZZQUNKNOWN"), 0.0, 1e-12);   // not in the table
+
+    // Fresh entry wins over the still-present aged one (regression):
+    // replacing an aged entry restores the fresh layer immediately.
+    av.loadCacheWithData({"DOGE"}, {1.0});
+    av.ageCacheEntryForTest("DOGE", 301);
+    CHECK_NEAR(av.getPrice("DOGE"), 1.0, 1e-12);
+    CHECK(table.prices.at("DOGE") != 2.0);
+    av.loadCacheWithData({"DOGE"}, {2.0});
+    CHECK_NEAR(av.getPrice("DOGE"), 2.0, 1e-12);     // fresh replacement wins
+}
+
 static void testParseBudgetWalletBuildAbort() {
     SECTION("wallet build honours the parse budget (clean abort, no throw)");
     // The parse-loop abort was covered; the wallet-BUILD re-check (the
@@ -2639,6 +2687,7 @@ int main() {
     testLegacyV2Migration();
     testSaveFormatV3LegacyRead();
     testPriceCache();
+    testPriceHierarchyReorder();
     testXmlSerialization();
     testFileLogLevels();
     testMoneySpentSeries();

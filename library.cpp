@@ -1,6 +1,7 @@
 #include "library.h"
 #include "FileLog.h"
 #include "DataHolder.h"
+#include "Price/StaticPrices.h"
 #include "TransactionParser.h"
 #include "TransactionManager.h"
 #include "TimeSpan.h"
@@ -99,6 +100,19 @@ void setPrice(const std::vector<double> &prices) {
     DataHolder::GetInstance().GetTransactionManager()->setPrices(prices);
     DataHolder::GetInstance().GetTransactionManager()->calculateWalletBalances();
     FileLog::i("library", "Done");
+}
+
+double getStaticPrice(const char *symbol) {
+    // The canonical offline table (single source - the Kotlin price
+    // chains are the only consumer and memoize the result). Stateless
+    // read: no DataHolder / TransactionManager access, so it is safe
+    // from any thread and needs no parse to have happened.
+    if (symbol == nullptr) {
+        return 0.0;
+    }
+    StaticPrices table;
+    auto it = table.prices.find(symbol);
+    return it != table.prices.end() ? it->second : 0.0;
 }
 
 
@@ -751,6 +765,23 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_clearAll(JNIEnv *, jobjec
         clearAll();
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI clearAll failed: " + std::string(e.what()));
+    }
+}
+
+extern "C"
+JNIEXPORT jdouble JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_getStaticPrice(
+        JNIEnv *env, jclass, jstring symbol) {
+    try {
+        if (symbol == nullptr) return 0.0;
+        ScopedUtfChars symbolChars(env, symbol);
+        return getStaticPrice(symbolChars.value().c_str());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getStaticPrice failed: " + std::string(e.what()));
+        return 0.0;
+    } catch (...) {
+        FileLog::e("library", "JNI getStaticPrice failed: unknown error");
+        return 0.0;
     }
 }
 

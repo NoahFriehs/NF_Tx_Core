@@ -19,8 +19,18 @@ public:
     //! Check if the cache is valid for a symbol
     bool testCache(const std::string &symbol) const;
 
-    //! Add a price to the cache
+    //! Return the last stored price regardless of age (the stale layer
+    //! of the price hierarchy); -1.0 when the symbol was never cached
+    //! (mirrors the Kotlin PriceCache::getStale).
+    double getStale(const std::string &symbol) const;
+
+    //! Add a price to the cache (timestamped at creation)
     void addPrice(const std::string &symbol, double price);
+
+    //! Test seam: move an existing entry's creation time [ageSeconds]
+    //! into the past (TTL expiry without sleeping). No-op when the
+    //! symbol is not cached.
+    void ageEntryForTest(const std::string &symbol, long long ageSeconds);
     //void reloadCache(AssetValue* assetValue);
 };
 

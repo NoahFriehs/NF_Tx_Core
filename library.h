@@ -57,6 +57,17 @@ std::vector<std::string> getCurrencies();
 //! \brief Set Crypto prices, must be in the same order as getCurrencies().
 void setPrice(const std::vector<double> &prices);
 
+//! \brief Returns the static baseline EUR price (the read-only offline
+//! fallback table) for the symbol; 0.0 for unknown symbols (never an
+//! invented price).
+//!
+//! NOTE (dlsym surface contract): plain-C exported name, like the
+//! series accessors below. Stateless table read - no DataHolder /
+//! TransactionManager access, safe from any thread.
+//! Do NOT move this declaration out of the extern "C" block: a
+//! C++-linkage regression would silently re-mangle the export.
+double getStaticPrice(const char *symbol);
+
 //! \brief Returns the total money spent.
 double getTotalMoneySpent();
 
