@@ -116,21 +116,27 @@ void TransactionManager::createCardWallets() {
 void TransactionManager::addTransactionsToWallets() {
     if (hasTxData) {
         if (currentMode == Mode::BlockPit) {
-            addBlockPitTransactionsToWallets();
+            addBlockPitTransactionsToWallets(0, transactions.size());
         } else {
-            addCDCTransactionsToWallets();
+            addCDCTransactionsToWallets(0, transactions.size());
         }
     }
 
-    if (hasCardTxData) addCardTransactionsToWallets();
+    if (hasCardTxData) addCardTransactionsToWallets(0, cardTransactions.size());
 }
 
-void TransactionManager::addCardTransactionsToWallets() {
+void TransactionManager::addCardTransactionsToWallets(size_t begin, size_t count) {
     if (parseBudgetExceeded()) {
         FileLog::e("TransactionManager", "Parse budget exceeded: aborting wallet build");
         return;
     }
-    for (auto &tx: cardTransactions) {
+    // [begin, end): the rows assigned in THIS pass - the full bucket after
+    // an init, only the freshly appended rows on the multi-file append (the
+    // per-row assignment below is row-local; re-running it over existing rows
+    // would credit their ledger deltas a second time).
+    const size_t end = std::min(begin + count, cardTransactions.size());
+    for (size_t i = begin; i < end; ++i) {
+        auto &tx = cardTransactions[i];
         std::string tt = tx.getTransactionTypeString();
         if (tt == "EUR -> EUR") {
             getOrCreateWallet(cardWallets, "EUR -> EUR").addTransaction(tx, true);
@@ -142,12 +148,14 @@ void TransactionManager::addCardTransactionsToWallets() {
     }
 }
 
-void TransactionManager::addCDCTransactionsToWallets() {
+void TransactionManager::addCDCTransactionsToWallets(size_t begin, size_t count) {
     if (parseBudgetExceeded()) {
         FileLog::e("TransactionManager", "Parse budget exceeded: aborting wallet build");
         return;
     }
-    for (auto &tx: transactions) {
+    const size_t end = std::min(begin + count, transactions.size());
+    for (size_t i = begin; i < end; ++i) {
+        auto &tx = transactions[i];
         FileLog::v("TransactionManager", "Adding transaction to wallet: " + tx.getCurrencyType());
         // add transaction to wallet
         auto &walletRef = getOrCreateWallet(wallets, tx.getCurrencyType());
@@ -212,14 +220,16 @@ void TransactionManager::addCDCTransactionsToWallets() {
     }
 }
 
-void TransactionManager::addBlockPitTransactionsToWallets() {
+void TransactionManager::addBlockPitTransactionsToWallets(size_t begin, size_t count) {
     if (parseBudgetExceeded()) {
         FileLog::e("TransactionManager", "Parse budget exceeded: aborting wallet build");
         return;
     }
     // Amounts are signed (see BaseTransaction::parseBlockPit): positive values
     // credit, negative values debit the wallet that owns the asset.
-    for (auto &tx: transactions) {
+    const size_t end = std::min(begin + count, transactions.size());
+    for (size_t i = begin; i < end; ++i) {
+        auto &tx = transactions[i];
         // Splits a crypto-to-crypto swap into a credit on the incoming asset's
         // wallet and a matching debit on the outgoing asset's wallet.
         auto addSwap = [this](BaseTransaction &tx) {
@@ -877,6 +887,97 @@ void TransactionManager::setTransactions(std::vector<BaseTransaction> &transacti
         case Custom:
             throw std::invalid_argument("Custom mode not implemented");
     }
+
+    // The append contract's bookkeeping mirrors the bucket content: a
+    // REPLACE rebuilds exactly this bucket's key set (the other bucket's
+    // bookkeeping stays), so a later append dedups against what the manager
+    // actually holds - and the single-file import path (a fresh manager) is
+    // untouched, its rows are never filtered.
+    if (mode == Mode::Card || mode == Mode::CurveCard) {
+        appendCardKeys_.clear();
+        registerAppendKeys(true, transactions_);
+    } else {
+        appendCryptoKeys_.clear();
+        registerAppendKeys(false, transactions_);
+    }
+}
+
+TransactionManager::AppendKey TransactionManager::appendKeyOf(const BaseTransaction &tx) {
+    const TransactionData d = tx.getTransactionData();
+    AppendKey k;
+    const std::tm &t = d.transactionDate;
+    k.time = (((((static_cast<long long>(t.tm_year) * 12) + t.tm_mon) * 31 + t.tm_mday) * 24
+               + t.tm_hour) * 60 + t.tm_min) * 60 + t.tm_sec;
+    k.description = d.description;
+    const long double amount = tx.getAmount();
+    k.amount = (amount != amount) ? 0.0L : amount;   // NaN guard: total ordering
+    k.currency = tx.getCurrencyType();
+    return k;
+}
+
+bool TransactionManager::hasAppendKey(bool isCard, const BaseTransaction &tx) const {
+    const auto &keys = isCard ? appendCardKeys_ : appendCryptoKeys_;
+    return keys.count(appendKeyOf(tx)) > 0;
+}
+
+void TransactionManager::registerAppendKeys(bool isCard, const std::vector<BaseTransaction> &txs) {
+    auto &keys = isCard ? appendCardKeys_ : appendCryptoKeys_;
+    for (const auto &tx: txs) keys.insert(appendKeyOf(tx));
+}
+
+size_t TransactionManager::appendTransactions(std::vector<BaseTransaction> &txs, Mode mode) {
+    std::lock_guard<std::mutex> lock(mutex);
+    if (txs.empty()) return 0;
+    if (mode == Mode::Custom) throw std::invalid_argument("Custom mode not implemented");
+    const bool card = (mode == Mode::Card || mode == Mode::CurveCard);
+    auto &bucket = card ? cardTransactions : transactions;
+
+    // Exact-tuple dedup at append time: a row identical to one already in
+    // this bucket is a counted skip - never an invisible double account
+    // (overlapping selections stay honest; exact only, never fuzzy).
+    std::vector<BaseTransaction> fresh;
+    size_t duplicates = 0;
+    for (auto &tx: txs) {
+        if (hasAppendKey(card, tx)) {
+            ++duplicates;
+            continue;
+        }
+        fresh.push_back(tx);
+    }
+    appendedDuplicateSkips_ += duplicates;
+    if (fresh.empty()) {
+        FileLog::i("TransactionManager",
+                   "Append: all " + std::to_string(duplicates) +
+                   " row(s) are duplicates of existing rows, nothing added");
+        return 0;
+    }
+
+    const size_t begin = bucket.size();
+    bucket.insert(bucket.end(), fresh.begin(), fresh.end());
+    if (card) {
+        hasCardTxData = true;
+    } else {
+        hasTxData = true;
+    }
+    registerAppendKeys(card, fresh);
+
+    // Incremental wallet build over the NEW rows only (see the range
+    // comment on addCardTransactionsToWallets): getCurrenciesFromTxs and
+    // createWallets are additive/idempotent, removeEmptyWallets only removes
+    // wallets that are still empty and unreferenced.
+    getCurrenciesFromTxs();
+    createWallets();
+    if (card) {
+        addCardTransactionsToWallets(begin, fresh.size());
+    } else if (mode == Mode::BlockPit) {
+        addBlockPitTransactionsToWallets(begin, fresh.size());
+    } else {
+        addCDCTransactionsToWallets(begin, fresh.size());
+    }
+    removeEmptyWallets();
+    FileLog::i("TransactionManager", "Append: added " + std::to_string(fresh.size()) +
+             " row(s), skipped " + std::to_string(duplicates) + " duplicate(s)");
+    return fresh.size();
 }
 
 std::string TransactionManager::checkCardTxTypes(const std::string &tt, const std::string &txType) {
@@ -1076,6 +1177,12 @@ void TransactionManager::loadData(const std::string &dirPath) {
             cardTransactions.insert(cardTransactions.end(), txs.begin(), txs.end());
         }
 
+    // Multi-file append contract: the restored rows ARE the seen keys, so an
+    // append after a restore dedups against the restored content (this also
+    // covers the v2 -> v3 upgrade path, which goes through the same load).
+    registerAppendKeys(false, transactions);
+    registerAppendKeys(true, cardTransactions);
+
     FileLog::i("TransactionManager", "Finished loading data");
 }
 
@@ -1121,6 +1228,9 @@ void TransactionManager::clearAll() {
 
     transactions.clear();
     cardTransactions.clear();
+    appendCryptoKeys_.clear();
+    appendCardKeys_.clear();
+    appendedDuplicateSkips_ = 0;
     wallets.clear();
     outWallets.clear();
     cardWallets.clear();

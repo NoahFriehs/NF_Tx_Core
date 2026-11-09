@@ -20,6 +20,21 @@ bool init(const std::string &logFilePath, const std::string &loadDirPath);
 bool initWithData(const std::vector<std::string> &data, int mode,
                   const std::string &logFilePath, long long parseBudgetMs);
 
+//! \brief Appends the given data to the ALREADY-INITIALIZED library (the
+//! multi-file combined view): the rows are parsed like initWithData (same
+//! parser, same parseBudgetMs deadline) and appended to the live manager's
+//! bucket for [mode]. Rows whose exact tuple (date, description, amount,
+//! currency) is already present in that bucket are skipped and counted
+//! (TransactionManager::getDuplicateSkips) instead of double-accounting the
+//! overlap - mixed-mode appends (card onto crypto or vice versa) are
+//! supported; the mode is implicit in the bucket.
+// The init-then-append ordering is the caller's guarantee (the Kotlin side
+// sequences it on the single core thread); on an uninitialized core this
+// logs and returns false (no throw across the C boundary). A parse that
+// yields zero rows returns false, like initWithData.
+bool appendWithData(const std::vector<std::string> &data, int mode,
+                    const std::string &logFilePath, long long parseBudgetMs);
+
 //! \brief Saves the current state to the given directory (created if
 //! missing; dir path with trailing slash). Returns true when the save
 //! succeeded.

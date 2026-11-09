@@ -7,6 +7,7 @@
 #include <vector>
 #include <map>
 #include <mutex>
+#include <set>
 #include "Transaction/BaseTransaction.h"
 #include "Wallet/Wallet.h"
 #include "Wallet/WalletBalance.h"
@@ -15,14 +16,60 @@
 
 class TransactionManager {
 public:
+    //! Exact-tuple identity of a ledger row (the multi-file append
+    //! contract). The tuple lives per bucket (the mode is implicit), and
+    //! the key sets are bookkeeping over the rows the manager holds -
+    //! rebuilt on every parse/append/restore, cleared by clearAll.
+    //! In-memory only: no stored format is affected.
+    struct AppendKey {
+        //! date parts folded into one comparable field (ymdhms)
+        long long time{};
+        std::string description;
+        long double amount{};
+        std::string currency;
+
+        bool operator<(const AppendKey &o) const {
+            if (time != o.time) return time < o.time;
+            if (description != o.description) return description < o.description;
+            // NaNs are normalized to 0 in appendKeyOf, so the strict
+            // weak ordering is total.
+            if (amount != o.amount) return amount < o.amount;
+            return currency < o.currency;
+        }
+    };
+
     TransactionManager();
 
     explicit TransactionManager(std::vector<BaseTransaction> &transactions);
 
     ~TransactionManager();
 
-    //! Set the transactions
+    //! Set the transactions (REPLACE of the bucket for [mode]; the
+    //! append-tuple bookkeeping of that bucket is rebuilt from [transactions_])
     void setTransactions(std::vector<BaseTransaction> &transactions_, Mode mode);
+
+    //! Appends [txs] (already parsed in [mode]) to the live manager:
+    //! rows whose exact tuple (date, description, amount, currency) is
+    //! already present in the bucket are SKIPPED and counted
+    //! (getDuplicateSkips) instead of double-accounting an overlapping
+    //! selection - exact only, never fuzzy. The mode is implicit in the
+    //! bucket (crypto/card), so rows can never collide across buckets.
+    //! Only the NEW rows are assigned to their wallets (re-running the
+    //! full processTransactions() would add the existing rows' ledger
+    //! deltas a second time). Returns the number of rows actually added.
+    size_t appendTransactions(std::vector<BaseTransaction> &txs, Mode mode);
+
+    //! Exact-tuple bookkeeping of one row (internal: the mutating paths
+    //! call it while holding the mutex; read-only access is safe)
+    static AppendKey appendKeyOf(const BaseTransaction &tx);
+
+    bool hasAppendKey(bool isCard, const BaseTransaction &tx) const;
+
+    void registerAppendKeys(bool isCard, const std::vector<BaseTransaction> &txs);
+
+    //! Rows skipped as exact-tuple duplicates by appendTransactions since
+    //! the last manager create/clearAll (0 for a single-file import)
+    size_t getDuplicateSkips() const { return appendedDuplicateSkips_; }
 
     //! Number of CSV lines that could not be parsed (set after parsing)
     void setFailedLines(size_t n) { failedLines = n; }
@@ -213,6 +260,10 @@ private:
     static thread_local long long t_parseBudgetMs;
     static thread_local std::chrono::steady_clock::time_point t_parseDeadline;
 
+    std::set<AppendKey> appendCryptoKeys_;
+    std::set<AppendKey> appendCardKeys_;
+    size_t appendedDuplicateSkips_ = 0;
+
     bool hasTxData = false;
     bool hasCardTxData = false;
     mutable std::mutex mutex;
@@ -253,11 +304,13 @@ private:
     //! Remove the unused transactions
     void removeUnusedTransactions();
 
-    //! Add Crypto transactions to the wallets
-    void addCDCTransactionsToWallets();
+    //! Add Crypto transactions to the wallets (the [begin, begin+count) range
+    //! of the crypto bucket = the rows assigned in this pass; full range for
+    //! an init, the newly appended rows for the multi-file append)
+    void addCDCTransactionsToWallets(size_t begin, size_t count);
 
-    //! Add BlockPit transactions to the wallets
-    void addBlockPitTransactionsToWallets();
+    //! Add BlockPit transactions to the wallets (range contract as above)
+    void addBlockPitTransactionsToWallets(size_t begin, size_t count);
 
     //! Create the card wallets
     void createCardWallets();
@@ -265,8 +318,8 @@ private:
     //! Create the crypto wallets
     void createCDCWallets();
 
-    //! Add the card transactions to the wallets
-    void addCardTransactionsToWallets();
+    //! Add the card transactions to the wallets (range contract as above)
+    void addCardTransactionsToWallets(size_t begin, size_t count);
 
     //! Card: Check cardTxTypes for tt and remove it and add txType to cardTxTypes
     std::string checkCardTxTypes(const std::string &tt, const std::string &txType);

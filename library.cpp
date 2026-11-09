@@ -91,6 +91,74 @@ bool initWithData(const std::vector<std::string> &data, int mode,
     return dataHolder.isInitialized();
 }
 
+bool appendWithData(const std::vector<std::string> &data, int mode,
+                    const std::string &logFilePath, long long parseBudgetMs) {
+
+    // The Kotlin side guarantees the init-then-append sequence on the
+    // single core thread. GetTransactionManager() would throw without an
+    // initialized TM - a throw across this C boundary would terminate the
+    // process, so check first and fail clean instead.
+    DataHolder &dataHolder = DataHolder::GetInstance();
+    if (!dataHolder.isInitialized()) {
+        FileLog::e("library", "appendWithData before init: nothing to append to");
+        return false;
+    }
+    TransactionManager *transactionManager = dataHolder.GetTransactionManager();
+
+    FileLog::init(logFilePath, true, FileLog::LOG_DEBUG);
+
+    FileLog::i("library", "Appending data, with mode " + std::to_string(mode) + "...");
+    FileLog::i("library", "Data size: " + std::to_string(data.size()));
+
+    TransactionManager::setParseBudgetMs(parseBudgetMs);
+
+    TimeSpan timeSpan;
+    timeSpan.start();
+
+    // Same parser and budget contract as initWithData.
+    TransactionParser parser(data);
+    try {
+        parser.parseFromCsv(static_cast<Mode>(mode));
+    } catch (std::exception &e) {
+        TransactionManager::setParseBudgetMs(0);
+        FileLog::e("library", e.what());
+        return false;
+    }
+
+    long double end = timeSpan.end();
+    FileLog::i("library", "Parsing took " + std::to_string(end) + " milliseconds");
+
+    // This file's OWN failed-line count (the Kotlin side accumulates the
+    // per-file counts along the sequence).
+    transactionManager->setFailedLines(parser.getFailedLines());
+
+    if (parser.getTransactions().empty()) {
+        // Zero parsable rows: the same contract as initWithData's empty set
+        // - a clean failure, the live model is untouched.
+        TransactionManager::setParseBudgetMs(0);
+        FileLog::e("library",
+                   "appendWithData: no parsable rows (failed lines: " +
+                   std::to_string(parser.getFailedLines()) + ")");
+        return false;
+    }
+
+    timeSpan.start();
+
+    transactionManager->appendTransactions(parser.getTransactions(), static_cast<Mode>(mode));
+
+    end = timeSpan.end();
+    FileLog::i("library", "Appending took " + std::to_string(end) + " milliseconds");
+
+    // Release the budget for the next call on this thread.
+    TransactionManager::setParseBudgetMs(0);
+
+    FileLog::i("library",
+               "Append finished: " + std::to_string(parser.getTransactions().size()) +
+               " row(s) of this file, duplicates skipped so far: " +
+               std::to_string(transactionManager->getDuplicateSkips()));
+    return true;
+}
+
 std::vector<std::string> getCurrencies() {
     return DataHolder::GetInstance().GetTransactionManager()->getCurrencies();
 }
@@ -426,6 +494,29 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_initWithData(JNIEnv *env,
 }
 
 extern "C"
+JNIEXPORT jboolean JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_appendWithData(JNIEnv *env, jobject,
+                                                                      jobjectArray data,
+                                                                      jint, jint mode,
+                                                                      jstring path,
+                                                                      jlong parseBudgetMs) {
+    try {
+        std::vector<std::string> lines;
+        if (!jArrayToStrings(env, data, lines)) return JNI_FALSE;
+        ScopedUtfChars pathChars(env, path);
+        if (!pathChars) return JNI_FALSE;
+        return appendWithData(lines, mode, pathChars.value(), parseBudgetMs)
+                ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI appendWithData failed: " + std::string(e.what()));
+        return JNI_FALSE;
+    } catch (...) {
+        FileLog::e("library", "JNI appendWithData failed: unknown error");
+        return JNI_FALSE;
+    }
+}
+
+extern "C"
 JNIEXPORT jobjectArray JNICALL
 Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getCurrencies(JNIEnv *env, jobject) {
     try {
@@ -553,6 +644,21 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getTotalBonus(JNIEnv *, j
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI getTotalBonus failed: " + std::string(e.what()));
         return 0.0;
+    }
+}
+
+extern "C"
+JNIEXPORT jlong JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getDuplicateSkips(JNIEnv *, jobject) {
+    try {
+        return static_cast<jlong>(
+                DataHolder::GetInstance().GetTransactionManager()->getDuplicateSkips());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI getDuplicateSkips failed: " + std::string(e.what()));
+        return 0;
+    } catch (...) {
+        FileLog::e("library", "JNI getDuplicateSkips failed: unknown error");
+        return 0;
     }
 }
 

@@ -33,6 +33,7 @@
 #include "../TransactionParser.h"
 #include "../Util/CharUtil.h"
 #include "../Util/Util.h"
+#include "../DataHolder.h"
 #include "../Wallet/Wallet.h"
 
 // ---------------------------------------------------------------- harness --
@@ -2660,6 +2661,236 @@ static void testDlsymSurfaceLinkage() {
     CHECK(spent(0, 0).empty());
 }
 
+// ------------------------------------------------- multi-file append tests ---
+//
+// The combined-view append contract on the real C surface (DataHolder):
+// file 1 through initWithData (REPLACE), the rest through appendWithData
+// with exact-tuple dedup at append time. The independent tally is a fresh
+// manager built from the union's rows in ONE import (identical per-row
+// wallet assignment, different ingestion path) - the two must agree on
+// every wallet figure.
+
+// Synthetic files (CDC crypto): A and B with disjoint tuples, C with one
+// unparsable line. Distinct dates/descriptions keep every tuple unique
+// within and across A/B; C's good row does not collide with either.
+static const std::vector<std::string> APPEND_FILE_A = {
+        CDC_HEADER,
+        cdcLine("2023-05-01 10:00:00", "BTC", "1", "100", "crypto_purchase", "buy1"),
+        cdcLine("2023-05-02 10:00:00", "ETH", "2", "200", "crypto_purchase", "buy2"),
+};
+static const std::vector<std::string> APPEND_FILE_B = {
+        CDC_HEADER,
+        cdcLine("2023-05-03 11:00:00", "BTC", "3", "300", "crypto_purchase", "buy3"),
+        cdcLine("2023-05-04 11:00:00", "ETH", "4", "400", "crypto_purchase", "buy4"),
+};
+static const std::vector<std::string> APPEND_FILE_C = {
+        CDC_HEADER,
+        cdcLine("2023-05-05 09:00:00", "LUNA", "7", "70", "crypto_purchase", "buy6"),
+        "only,four,columns,here",   // counts as this file's own failed line
+};
+
+//! A fresh manager with exactly the union of [first] + [rest...] rows (the
+//! rest header-less, like a single CSV with concatenated body rows).
+static std::unique_ptr<TransactionManager> buildReferenceUnion(
+        const std::vector<std::string> &first,
+        std::initializer_list<const std::vector<std::string> *> rest,
+        Mode mode) {
+    std::vector<std::string> lines = first;
+    for (const auto *f: rest)
+        lines.insert(lines.end(), f->begin() + 1, f->end());
+    TransactionParser parser(lines);
+    parser.parseFromCsv(mode);
+    CHECK(parser.getFailedLines() == 0);
+    auto tm = std::make_unique<TransactionManager>();
+    tm->setTransactions(parser.getTransactions(), mode);
+    tm->processTransactions();
+    return tm;
+}
+
+static void checkWalletMapsEqual(const std::map<std::string, Wallet> &live,
+                                 const std::map<std::string, Wallet> &reference) {
+    CHECK(live.size() == reference.size());
+    for (const auto &[cur, w]: live) {
+        auto it = reference.find(cur);
+        CHECK(it != reference.end());
+        if (it == reference.end()) continue;
+        const Wallet &r = it->second;
+        CHECK_NEAR((double) w.getBalance(), (double) r.getBalance(), 1e-6);
+        CHECK_NEAR((double) w.getMoneySpent(), (double) r.getMoneySpent(), 1e-6);
+        CHECK_NEAR((double) w.getBonusBalance(), (double) r.getBonusBalance(), 1e-6);
+        CHECK(w.getTransactions().size() == r.getTransactions().size());
+    }
+}
+
+//! The live (DataHolder) manager's append counters - the JNI-level view
+//! of what the Kotlin side accumulates along the sequence.
+static size_t duplicateSkipsNow() {
+    return DataHolder::GetInstance().GetTransactionManager()->getDuplicateSkips();
+}
+
+static size_t failedLinesNow() {
+    return DataHolder::GetInstance().GetTransactionManager()->getFailedLines();
+}
+
+static double referenceCardSpent() {
+    auto curve = loadFixture("curve_card.csv");
+    TransactionParser parser(curve);
+    parser.parseFromCsv(Mode::CurveCard);
+    auto tm = std::make_unique<TransactionManager>();
+    tm->setTransactions(parser.getTransactions(), Mode::CurveCard);
+    tm->processTransactions();
+    return tm->getTotalMoneySpentCard();
+}
+
+static void testMultiFileAppend() {
+    SECTION("multi-file append: union, exact-tuple dedup, mixed modes, budget, 10k overlap");
+    const std::string log = "tests.log";
+    const int cdc = static_cast<int>(Mode::CDC);
+    const int curve = static_cast<int>(Mode::CurveCard);
+
+    // 1. UNION: init(A) + append(B) == one import of A+B (independent tally)
+    CHECK(initWithData(APPEND_FILE_A, cdc, log, 0));
+    CHECK(getActiveModes() == 1);
+    CHECK(getTransactionsAsStrings().size() == 2);
+    CHECK(appendWithData(APPEND_FILE_B, cdc, log, 0));
+    CHECK(getTransactionsAsStrings().size() == 4);
+    CHECK(duplicateSkipsNow() == 0);
+    {
+        auto ref = buildReferenceUnion(APPEND_FILE_A, {&APPEND_FILE_B}, Mode::CDC);
+        CHECK(ref->getTransactions().size() == 4);
+        checkWalletMapsEqual(DataHolder::GetInstance().GetTransactionManager()->getWallets(),
+                             ref->getWallets());
+        CHECK_NEAR(getTotalMoneySpent(), ref->getTotalMoneySpent(), 1e-9);
+        CHECK_NEAR(getTotalBonus(), ref->getTotalBonus(), 1e-9);
+    }
+
+    // 2. EXACT duplicates: re-appending A skips both rows, counted; the
+    // aggregates stay at the union figures (no double account).
+    CHECK(appendWithData(APPEND_FILE_A, cdc, log, 0));
+    CHECK(duplicateSkipsNow() == 2);
+    CHECK(getTransactionsAsStrings().size() == 4);
+    CHECK(appendWithData(APPEND_FILE_B, cdc, log, 0));
+    CHECK(duplicateSkipsNow() == 4);
+    CHECK(getTransactionsAsStrings().size() == 4);
+    {
+        auto ref = buildReferenceUnion(APPEND_FILE_A, {&APPEND_FILE_B}, Mode::CDC);
+        checkWalletMapsEqual(DataHolder::GetInstance().GetTransactionManager()->getWallets(),
+                             ref->getWallets());
+        CHECK_NEAR(getTotalMoneySpent(), ref->getTotalMoneySpent(), 1e-9);
+    }
+
+    // 2b. A file's OWN failed-line count rides the append (the Kotlin side
+    // accumulates it per file); re-appending the same file skips only its
+    // good row and re-counts the failed line.
+    CHECK(appendWithData(APPEND_FILE_C, cdc, log, 0));
+    CHECK(failedLinesNow() == 1);
+    CHECK(getTransactionsAsStrings().size() == 5);
+    CHECK(appendWithData(APPEND_FILE_C, cdc, log, 0));
+    CHECK(duplicateSkipsNow() == 5);
+    CHECK(failedLinesNow() == 1);
+    CHECK(getTransactionsAsStrings().size() == 5);
+
+    // 3. MIXED, card first: init(curve) + append(A) -> both buckets live,
+    // getActiveModes()==3, each side identical to its own single import.
+    auto curveFile = loadFixture("curve_card.csv");
+    const double refCardSpent = referenceCardSpent();
+    CHECK(initWithData(curveFile, curve, log, 0));
+    CHECK(getActiveModes() == 2);
+    CHECK(failedLinesNow() == 1);   // the curve fixture's broken line (its own count)
+    CHECK(getCardTransactionsAsStrings().size() == 7);
+    CHECK(appendWithData(APPEND_FILE_A, cdc, log, 0));
+    CHECK(getActiveModes() == 3);
+    CHECK(getTransactionsAsStrings().size() == 2);
+    CHECK(getCardTransactionsAsStrings().size() == 7);
+    CHECK(duplicateSkipsNow() == 0);
+    CHECK_NEAR(getTotalMoneySpentCard(), refCardSpent, 1e-9);
+    {
+        auto refA = buildTmFromCdcLines(APPEND_FILE_A);
+        checkWalletMapsEqual(DataHolder::GetInstance().GetTransactionManager()->getWallets(),
+                             refA->getWallets());
+        CHECK_NEAR(getTotalMoneySpent(), refA->getTotalMoneySpent(), 1e-9);
+    }
+
+    // 4. MIXED, crypto first: init(A) + append(curve) -> same union
+    // regardless of the order the buckets are filled in.
+    CHECK(initWithData(APPEND_FILE_A, cdc, log, 0));
+    CHECK(getActiveModes() == 1);
+    CHECK(appendWithData(curveFile, curve, log, 0));
+    CHECK(getActiveModes() == 3);
+    CHECK(getTransactionsAsStrings().size() == 2);
+    CHECK(getCardTransactionsAsStrings().size() == 7);
+    CHECK(failedLinesNow() == 1);   // the appended file's own count
+    CHECK(duplicateSkipsNow() == 0);
+    CHECK_NEAR(getTotalMoneySpentCard(), refCardSpent, 1e-9);
+    {
+        auto refA = buildTmFromCdcLines(APPEND_FILE_A);
+        checkWalletMapsEqual(DataHolder::GetInstance().GetTransactionManager()->getWallets(),
+                             refA->getWallets());
+    }
+
+    // 5. 10k OVERLAP: the first 1000 rows init, then the FULL file appends -
+    // the 1000 shared rows are counted duplicates and the union is exactly
+    // the full file imported alone (same wallet figures, independent tally).
+    const auto full10k = loadFixture("blockpit_10k.csv");
+    const size_t shared = 1000;
+    CHECK(full10k.size() > shared + 1);
+    {
+        // reference: the full file alone (stack TM, independent of DataHolder)
+        TransactionParser refParser(full10k);
+        refParser.parseFromCsv(Mode::CDC);
+        CHECK(refParser.getFailedLines() == 0);
+        if (refParser.getFailedLines() != 0 || refParser.getTransactions().empty()) {
+            CHECK(false);   // fixture shape mismatch - fail clean, don't throw
+            return;
+        }
+        auto ref = std::make_unique<TransactionManager>();
+        ref->setTransactions(refParser.getTransactions(), Mode::CDC);
+        ref->processTransactions();
+        CHECK(ref->getTransactions().size() == 10000);
+
+        std::vector<std::string> head(full10k.begin(), full10k.begin() + shared + 1);
+        CHECK(initWithData(head, cdc, log, 0));
+        CHECK(getTransactionsAsStrings().size() == shared);
+        CHECK(appendWithData(full10k, cdc, log, 0));
+        CHECK(duplicateSkipsNow() == shared);
+        CHECK(getTransactionsAsStrings().size() == 10000);
+        checkWalletMapsEqual(DataHolder::GetInstance().GetTransactionManager()->getWallets(),
+                             ref->getWallets());
+        CHECK_NEAR(getTotalMoneySpent(), ref->getTotalMoneySpent(), 1e-6);
+    }
+
+    // 6. BUDGET: the parse budget applies to appends too (051 discipline).
+    CHECK(initWithData(APPEND_FILE_A, cdc, log, 0));
+    // 6a. already-expired budget: the parse aborts before taking any row -
+    // a clean false, the live model untouched.
+    CHECK(!appendWithData(APPEND_FILE_B, cdc, log, -1));
+    CHECK(getTransactionsAsStrings().size() == 2);
+    CHECK(duplicateSkipsNow() == 0);
+    // 6b. an expiry between parse and wallet build degrades to the row
+    // landing in the bucket WITHOUT being attached to a wallet (no throw,
+    // no double account) - the append sibling of the init abort path.
+    {
+        TransactionManager::setParseBudgetMs(0);
+        TransactionParser parserB(APPEND_FILE_B);
+        parserB.parseFromCsv(Mode::CDC);
+        CHECK(parserB.getTransactions().size() == 2);
+        const long double spentBefore =
+                DataHolder::GetInstance().GetTransactionManager()->getTotalMoneySpent();
+        TransactionManager::setParseBudgetMs(-1);   // expires before the build
+        DataHolder::GetInstance().GetTransactionManager()
+                ->appendTransactions(parserB.getTransactions(), Mode::CDC);
+        TransactionManager::setParseBudgetMs(0);
+        CHECK(getTransactionsAsStrings().size() == 4);   // rows landed in the bucket
+        CHECK_NEAR(DataHolder::GetInstance().GetTransactionManager()->getTotalMoneySpent(),
+                   spentBefore, 1e-12);   // but nothing was attached to a wallet
+        CHECK(DataHolder::GetInstance().GetTransactionManager()->isReady());
+    }
+
+    // Leave the C surface on a settled, fully-processed state.
+    CHECK(initWithData(APPEND_FILE_A, cdc, log, 0));
+    CHECK(duplicateSkipsNow() == 0);
+}
+
 // ------------------------------------------------------------------ main ---
 
 int main() {
@@ -2708,6 +2939,7 @@ int main() {
     testKrakenFixture();
     testBlockPitFixture();
     testImportStateSemantics();
+    testMultiFileAppend();
     testDlsymSurfaceLinkage();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,
