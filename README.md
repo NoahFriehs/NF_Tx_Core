@@ -34,7 +34,7 @@ standalone build serves the unit-test suite and the CLI tester.
 
 | Path | Contents |
 |---|---|
-| `library.cpp` / `library.h` | C/JNI API (the Android `CoreService` natives + the tester's dlsym surface) |
+| `library.cpp` / `library.h` | C/JNI API (the Android `CoreService` natives + the tester's dlsym surface) — the 3 series accessors are declared in library.h's extern "C" block and exported under plain C names (the same contract applies to getStaticPrice) |
 | `Transaction/` | parsers + the C++ transaction model |
 | `Wallet/` | wallet / card ledgers + series building |
 | `Price/` | price providers, caches, static fallback table |
