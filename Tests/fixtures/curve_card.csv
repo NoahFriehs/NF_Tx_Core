@@ -1,0 +1,9 @@
+Date (YYYY-MM-DD as UTC),Merchant,Txn Amount (Funding Card),Txn Currency (Funding Card),Txn Amount (Foreign Spend),Txn Currency (Foreign Spend),Card Name,Card Last 4 Digits,Type,Category,Notes
+2026-03-01 09:30:00,Supermarket,42.50,EUR,42.50,EUR,Curve Blue,1111,Approved,Groceries,Basket
+2026-03-02 14:00:00,Ristorante Milano,125.00,EUR,118.00,USD,Curve Blue,1111,Approved,Travel,Lunch
+2026-03-03,Grocer Mart,15.25,EUR,,EUR,Curve Blue,1111,Approved,Groceries,
+2026-03-04 10:00:00,Supermarket,42.50,EUR,42.50,EUR,Curve Blue,1111,REFUNDED,Groceries,
+2026-03-05 11:00:00,Club Entry,10.00,EUR,10.00,EUR,Curve Blue,1111,Declined,Leisure,
+2026-03-06 12:00:00,Mega Store,"1,234.56",EUR,"1,234.56",EUR,Curve Blue,1111,Approved,Shopping,Bulk
+2026-03-07 13:00:00,"Burger King, Downtown",25.00,EUR,25.00,EUR,Curve Blue,1111,Approved,Food,Deal
+2026-03-08 14:00:00,Broken Row,30.00,EUR,30.00,EUR,Curve Blue,1111,Approved,Cafe

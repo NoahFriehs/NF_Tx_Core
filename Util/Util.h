@@ -30,6 +30,11 @@ public:
     //! Convert a string to a tm struct (DD.MM.YYYY HH:MM:SS for BlockPit)
     static std::tm stringToTmBlockPit(const std::string &timestamp_str);
 
+    //! Convert a Curve card timestamp: "YYYY-MM-DD HH:MM:SS" first, with a
+    //! fallback to the date-only "YYYY-MM-DD" (midnight) promised by the
+    //! Curve export header
+    static std::tm stringToTmCurve(const std::string &timestamp_str);
+
     //! Convert a tm struct to a string
     static std::string tmToString(const std::tm &timestamp_tm);
 };

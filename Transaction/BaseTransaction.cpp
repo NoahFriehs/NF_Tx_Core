@@ -35,6 +35,15 @@ void BaseTransaction::parseCDC(const std::string &txString) {
 
 }
 
+//! Curve amounts use the comma as thousands separator ("1,234.56").
+static long double parseCurveAmount(const std::string &s) {
+    return std::stold(removeAllOccurrences(s, ','));
+}
+
+bool BaseTransaction::isExcludedFromTotals() const {
+    return excludedFromTotals;
+}
+
 std::string BaseTransaction::getCurrencyType() const {
     return currencyType;
 }
@@ -124,9 +133,55 @@ TransactionData BaseTransaction::getTransactionData() const {
     txData.transactionTypeOrdinal = transactionType;
     txData.transactionHash = transactionHash;
     txData.isOutsideTransaction = isOutsideTransaction;
+    txData.excludedFromTotals = excludedFromTotals;
     txData.notes = notes;
 
     return txData;
+}
+
+void BaseTransaction::parseCurve(const std::string &txString) {
+    // Column layout (Curve export, 11 fields):
+    // 0 date (YYYY-MM-DD or full date+time)  1 merchant
+    // 2 amount (funding)  3 funding currency  4 amount (foreign spend)
+    // 5 foreign currency  6 card name  7 card last 4 digits
+    // 8 type (the exclusion set)  9 category  10 notes
+    auto tx = splitCsvLine(txString, ',');
+
+    // splitCsvLine drops TRAILING empty fields, so a line ending in an
+    // empty Notes (...,Groceries,) splits to 10 fields; one trailing
+    // comma pads the empty 11th field back. A 10-field line WITHOUT a
+    // trailing comma is a broken row (skipped by the caller).
+    if (tx.size() == 10 && !txString.empty() && txString.back() == ',') {
+        tx.push_back("");
+    }
+
+    if (tx.size() != 11) {
+        throw std::invalid_argument(
+                "Curve line needs exactly 11 columns, got " + std::to_string(tx.size()));
+    }
+
+    transactionId = txIdCounter++;
+    transactionDate = TimestampConverter::stringToTmCurve(tx[0]);
+    description = tx[1];
+    transactionTypeString = tx[1];   // merchant-based wallet routing
+    currencyType = tx[3];
+    amount = parseCurveAmount(tx[2]);
+    // Empty OR whitespace-only foreign spend means funding-only: the
+    // funding amount is the native amount.
+    nativeAmount =
+            tx[4].find_first_not_of(" \t") == std::string::npos ? amount
+                                                                 : parseCurveAmount(tx[4]);
+    toCurrencyType = tx[5];
+    transactionHash = tx[6] + tx[7];
+    transactionType = STRING;
+
+    // Exclusion set: the exact legacy set, case-sensitive. Rows of these
+    // Types stay in the lists but apply no wallet totals.
+    excludedFromTotals = (tx[8] == "REFUNDED" || tx[8] == "Declined");
+
+    // Category + Notes are concatenated unconditionally (a trailing ": "
+    // stays when Notes is empty).
+    notes = tx[9] + ": " + tx[10];
 }
 
 void BaseTransaction::parseCard(const std::string &txString) {
@@ -166,6 +221,7 @@ TransactionStruct BaseTransaction::getTransactionStruct() {
     data.transactionTypeString = transactionTypeString;
     data.transactionHash = transactionHash;
     data.isOutsideTransaction = isOutsideTransaction;
+    data.excludedFromTotals = excludedFromTotals;
     data.notes = notes;
     return data;
 }
@@ -187,6 +243,7 @@ void BaseTransaction::fromTransactionStruct(const TransactionStruct &data) {
     transactionTypeString = data.transactionTypeString;
     transactionHash = data.transactionHash;
     isOutsideTransaction = data.isOutsideTransaction;
+    excludedFromTotals = data.excludedFromTotals;
     notes = data.notes;
 }
 
@@ -229,6 +286,7 @@ void BaseTransaction::setTransactionData(const TransactionStruct &txStruct) {
     transactionTypeString = txStruct.transactionTypeString;
     transactionHash = txStruct.transactionHash;
     isOutsideTransaction = txStruct.isOutsideTransaction;
+    excludedFromTotals = txStruct.excludedFromTotals;
     notes = txStruct.notes;
 }
 

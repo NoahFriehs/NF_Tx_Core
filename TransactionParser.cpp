@@ -39,6 +39,9 @@ void TransactionParser::parseFromCsv(Mode mode) {
         case Card:
             parseCard();
             break;
+        case CurveCard:
+            parseCurveCard();
+            break;
         case Kraken:
             parseKraken();
             break;
@@ -125,6 +128,45 @@ void TransactionParser::parseCard() {
     data.clear();
     hasData = false;
 
+}
+
+void TransactionParser::parseCurveCard() {
+    // The exact Curve export header (kept in sync with the Kotlin
+    // curveTxString literal in AppTypeIdentifier).
+    constexpr const char *CURVE_HEADER =
+            "Date (YYYY-MM-DD as UTC),Merchant,Txn Amount (Funding Card),"
+            "Txn Currency (Funding Card),Txn Amount (Foreign Spend),"
+            "Txn Currency (Foreign Spend),Card Name,Card Last 4 Digits,Type,"
+            "Category,Notes";
+    if (CURVE_HEADER == cleanCsvLine(data[0]))
+        data.erase(data.begin());   // remove header row, if needed
+
+    for (const auto &item: data) {
+        if (TransactionManager::parseBudgetExceeded()) {
+            FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            break;
+        }
+        BaseTransaction transaction;
+        try {
+            transaction.parseCurve(cleanCsvLine(item));
+            transactions.push_back(transaction);
+        } catch (const std::exception &e) {
+            // Skip the broken line, continue with the rest (same behavior
+            // as the Kotlin core's amountTxFailed counter).
+            failedLines++;
+            FileLog::w("TransactionParser",
+                       "Skipping unparsable line: " + std::string(e.what()));
+        }
+    }
+
+    FileLog::i("TransactionParser",
+               "Parsed " + std::to_string(transactions.size()) + " transactions" +
+                       (failedLines > 0
+                            ? ", " + std::to_string(failedLines) + " line(s) failed"
+                            : ""));
+
+    data.clear();
+    hasData = false;
 }
 
 void TransactionParser::parseKraken() {

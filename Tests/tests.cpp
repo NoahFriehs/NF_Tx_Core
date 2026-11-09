@@ -571,7 +571,7 @@ static void testTxIdCounterRoundTrip() {
 }
 
 static void testBinaryUtil() {
-    SECTION("binary format v3: portable layout, explicit little-endian");
+    SECTION("binary format (v4): portable layout, explicit little-endian");
     const std::string dir =
             (std::filesystem::temp_directory_path() / "nf_tx_core_tests_bin").string() + "/";
     std::filesystem::remove_all(dir);
@@ -592,7 +592,7 @@ static void testBinaryUtil() {
         CHECK(BinaryUtil::writeStateFile(dir + "state", st));
         TransactionManagerState in;
         in.txIdCounter = -1;
-        CHECK(BinaryUtil::readStateFile(dir + "state", in) == 3);
+        CHECK(BinaryUtil::readStateFile(dir + "state", in) == BinaryUtil::kVersionV4);
         CHECK(in.hasTxData && in.hasCardTxData && in.isReadyFlag);
         CHECK(in.txIdCounter == 424242);
         CHECK(in.walletIdCounter == 7);
@@ -600,7 +600,7 @@ static void testBinaryUtil() {
         CHECK(in.cardTxTypes == st.cardTxTypes);
     }
 
-    // explicit byte layout: CWCP, version 3, little-endian
+    // explicit byte layout: CWCP, version 4, little-endian
     {
         TransactionManagerState st;
         st.txIdCounter = 3;
@@ -610,7 +610,7 @@ static void testBinaryUtil() {
         f.read(b, sizeof b);
         CHECK(f.gcount() == static_cast<std::streamsize>(sizeof b));
         CHECK(std::memcmp(b, "CWCP", 4) == 0);
-        CHECK(b[4] == 3);
+        CHECK(b[4] == BinaryUtil::kVersionV4);
         CHECK(static_cast<unsigned char>(b[5]) == 0);   // flags
         int32_t txCounter = 0, walletCounter = 0;
         std::memcpy(&txCounter, b + 6, 4);
@@ -624,7 +624,7 @@ static void testBinaryUtil() {
         CHECK(BinaryUtil::writeWalletStore(dir + "empty", {}));
         CHECK(std::filesystem::file_size(dir + "empty") == 5 + 4);
         std::vector<WalletStruct> in;
-        CHECK(BinaryUtil::readWalletStore(dir + "empty", in) == 3);
+        CHECK(BinaryUtil::readWalletStore(dir + "empty", in) == BinaryUtil::kVersionV4);
         CHECK(in.empty());
     }
 
@@ -647,7 +647,9 @@ static void testBinaryUtil() {
         f.write("\xff\xff\xff\xff", 4);   // count = 4 GiB, file has nothing
         f.close();
         std::vector<WalletStruct> in;
-        CHECK(BinaryUtil::readWalletStore(dir + "badcount", in) == 3);
+        // The crafted header says v3: the reader honours it (layout v3),
+        // clamps the count to zero, and reports the file's version.
+        CHECK(BinaryUtil::readWalletStore(dir + "badcount", in) == BinaryUtil::kVersionV3);
         CHECK(in.empty());
 
         std::ofstream g(dir + "badstring", std::ios::binary);
@@ -660,7 +662,8 @@ static void testBinaryUtil() {
         g.close();
         TransactionManagerState st;
         st.txIdCounter = -1;
-        CHECK(BinaryUtil::readStateFile(dir + "badstring", st) == 3);
+        // Crafted v3 header: the reader honours the version byte.
+        CHECK(BinaryUtil::readStateFile(dir + "badstring", st) == BinaryUtil::kVersionV3);
         CHECK(st.hasTxData);
         CHECK(st.txIdCounter == 1);
         CHECK(st.currencies.empty());
@@ -684,7 +687,7 @@ static void testBinaryUtil() {
 }
 
 static void testUnlimitedPersistence() {
-    SECTION("v3 stores hold more wallets/transactions/chars than the legacy caps");
+    SECTION("v4 stores hold more wallets/transactions/chars than the legacy caps");
     const std::string dir =
             (std::filesystem::temp_directory_path() / "nf_tx_core_tests_big").string() + "/";
     std::filesystem::remove_all(dir);
@@ -732,7 +735,7 @@ static void testUnlimitedPersistence() {
     CHECK(BinaryUtil::writeWalletStore(dir + "big", in));
 
     std::vector<WalletStruct> out;
-    CHECK(BinaryUtil::readWalletStore(dir + "big", out) == 3);
+    CHECK(BinaryUtil::readWalletStore(dir + "big", out) == BinaryUtil::kVersionV4);
     CHECK(out.size() == nWallets);
     CHECK(out[0].transactions.size() == nTxsPerWallet);
     CHECK(out[149].walletId == 149);
@@ -783,7 +786,7 @@ static void testUnlimitedPersistence() {
 }
 
 static void testLegacyV2Migration() {
-    SECTION("legacy v2 files stay readable and are upgraded to v3 on save");
+    SECTION("legacy v2 files stay readable and are upgraded to v4 on save");
     const std::string dir =
             (std::filesystem::temp_directory_path() / "nf_tx_core_tests_legacy").string() + "/";
     std::filesystem::remove_all(dir);
@@ -877,13 +880,13 @@ static void testLegacyV2Migration() {
 
     tm.saveData(dir);
 
-    // the files are now v3
+    // the files are now v4
     for (const char *name: {"wallets", "state", "cardWallets"}) {
         std::ifstream f(dir + name, std::ios::binary);
         char hb[5] = {};
         f.read(hb, 5);
         CHECK(std::memcmp(hb, "CWCP", 4) == 0);
-        CHECK(hb[4] == 3);
+        CHECK(hb[4] == BinaryUtil::kVersionV4);
     }
 
     TransactionManager loaded;
@@ -897,6 +900,191 @@ static void testLegacyV2Migration() {
         CHECK(!txs.empty() && txs[0].getTransactionData().description == "coffee");
     }
 
+    std::filesystem::remove_all(dir);
+}
+
+// The v3 -> v4 format split (the review fix for the mid-record
+// excludedFromTotals byte): files the PRE-Curve device builds wrote
+// (version byte 3, transaction record with ONE flag byte) must still
+// read - with excludedFromTotals defaulting to false - and a legacy
+// store is re-saved in v4 on the next save. The legacy bytes are
+// written by hand here: the byte-exact mirror of the CURRENT
+// writeTransaction MINUS the excludedFromTotals byte is what pins the
+// old layout (the truncation section pins the mid-record guard).
+static void testSaveFormatV3LegacyRead() {
+    SECTION("legacy v3 store (one flag byte) reads, v3 flag defaults off, save upgrades to v4");
+    const std::string dir =
+            (std::filesystem::temp_directory_path() / "nf_tx_core_tests_v3legacy").string() + "/";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    // Little-endian byte assembler for the legacy v3 files.
+    auto bytes = std::vector<char>{};
+    auto push_u8 = [&bytes](uint8_t v) { bytes.push_back(static_cast<char>(v)); };
+    auto push_i32 = [&bytes](int32_t v) {
+        const uint32_t u = static_cast<uint32_t>(v);
+        for (int i = 0; i < 4; i++) bytes.push_back(static_cast<char>((u >> (8 * i)) & 0xFF));
+    };
+    auto push_f64 = [&bytes](double v) {
+        uint64_t u = 0;
+        std::memcpy(&u, &v, sizeof(u));
+        for (int i = 0; i < 8; i++) bytes.push_back(static_cast<char>((u >> (8 * i)) & 0xFF));
+    };
+    auto push_str = [&bytes, &push_i32](const std::string &s) {
+        push_i32(static_cast<int32_t>(s.size()));
+        bytes.insert(bytes.end(), s.begin(), s.end());
+    };
+    auto header = [&bytes, &push_u8](uint8_t version) {
+        bytes.insert(bytes.end(), BinaryUtil::kMagic, BinaryUtil::kMagic + 4);
+        push_u8(version);
+    };
+    auto write_file = [&dir, &bytes](const std::string &name) {
+        std::ofstream f(dir + name, std::ios::binary | std::ios::trunc);
+        f.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+        bytes.clear();   // the next file assembles fresh
+    };
+
+    // wallets: ONE wallet (BTC) with ONE transaction in the LEGACY layout
+    // (isOutsideTransaction byte only - no excludedFromTotals byte).
+    {
+        header(BinaryUtil::kVersionV3);
+        push_i32(1);   // 1 wallet (list counts are u32)
+        // wallet fixed fields
+        push_i32(1);                    // walletId
+        push_f64(100.0);                // balance
+        push_f64(100.0);                // nativeBalance
+        push_f64(0.0);                  // bonusBalance
+        push_f64(50.0);                 // moneySpent
+        push_u8(0);                     // flags (not outside)
+        push_str("BTC");                // currencyType
+        push_str("");                   // notes
+        push_i32(1);                    // 1 transaction
+        // transaction, legacy v3 layout
+        push_i32(1);                    // transactionId
+        push_i32(1);                    // walletId
+        push_i32(0);                    // fromWalletId
+        push_i32(0);                    // transactionTypeOrdinal
+        // date 2026-03-01 09:30:00 (the file stores the ABSOLUTE year;
+        // the reader restores tm_year = year - 1900)
+        push_i32(2026);
+        push_u8(3);                     // month (stored as tm_mon + 1)
+        push_u8(1);                     // mday
+        push_u8(9);                     // hour
+        push_u8(30);                    // min
+        push_u8(0);                     // sec
+        push_f64(-50.0);                // amount
+        push_f64(0.0);                  // toAmount
+        push_f64(-50.0);                // nativeAmount
+        push_f64(0.0);                  // amountBonus
+        push_u8(0);                     // the ONE flag byte (isOutsideTransaction)
+        push_str("Legacy Shop");        // description
+        push_str("BTC");                // currencyType
+        push_str("");                   // toCurrencyType
+        push_str("Legacy Shop");        // transactionTypeString
+        push_str("");                   // transactionHash
+        push_str("");                   // notes
+        write_file("wallets");
+    }
+    // cardWallets: empty store
+    {
+        header(BinaryUtil::kVersionV3);
+        push_i32(0);
+        write_file("cardWallets");
+    }
+    // state: hasTxData | isReadyFlag, counters, one currency, no card types
+    {
+        header(BinaryUtil::kVersionV3);
+        push_u8(1 | 4);   // flags
+        push_i32(2);      // txIdCounter
+        push_i32(2);      // walletIdCounter
+        push_i32(1);      // 1 currency
+        push_str("BTC");
+        push_i32(0);      // 0 card tx types
+        write_file("state");
+    }
+
+    // Direct reader: the version byte is honoured, the record reads with
+    // the ONE-flag-byte layout.
+    {
+        std::vector<WalletStruct> direct;
+        CHECK(BinaryUtil::readWalletStore(dir + "wallets", direct) == BinaryUtil::kVersionV3);
+        CHECK(direct.size() == 1);
+        CHECK(direct[0].transactions.size() == 1);
+        CHECK(direct[0].transactions[0].description == "Legacy Shop");
+        CHECK(direct[0].transactions[0].excludedFromTotals == false);
+    }
+
+    // Full pipeline: load the legacy dir...
+    TransactionManager tm;
+    tm.loadData(dir);
+    {
+        const auto st = tm.getTransactionManagerState();
+        CHECK(st.hasTxData);
+        CHECK(!st.hasCardTxData);
+        CHECK(st.isReadyFlag);
+        CHECK(tm.getWallets().size() == 1);
+        CHECK_NEAR(static_cast<double>(tm.getWallets().at("BTC").getBalance()), 100.0, 1e-12);
+        CHECK_NEAR(static_cast<double>(tm.getWallets().at("BTC").getMoneySpent()), 50.0, 1e-12);
+        const auto txs = tm.getTransactions();
+        CHECK(txs.size() == 1);
+        CHECK(!txs[0].isExcludedFromTotals());   // the missing v3 byte = false, never garbage
+        CHECK(txs[0].getTransactionData().description == "Legacy Shop");
+        const auto &d = txs[0].getTransactionData();
+        CHECK(d.transactionDate.tm_year == 2026 - 1900);
+        CHECK(d.transactionDate.tm_mon == 2);
+        CHECK(d.transactionDate.tm_mday == 1);
+    }
+
+    // ...re-save -> CURRENT format (v4) on every file...
+    CHECK(tm.saveData(dir));
+    for (const char *name: {"wallets", "state", "cardWallets"}) {
+        std::ifstream f(dir + name, std::ios::binary);
+        char hb[5] = {};
+        f.read(hb, 5);
+        CHECK(std::memcmp(hb, "CWCP", 4) == 0);
+        CHECK(hb[4] == BinaryUtil::kVersionV4);
+    }
+
+    // ...and the v4 round trip keeps the row (flag still false).
+    {
+        TransactionManager loaded;
+        loaded.loadData(dir);
+        CHECK(loaded.getWallets().size() == 1);
+        const auto txs = loaded.getTransactions();
+        CHECK(txs.size() == 1);
+        CHECK(!txs[0].isExcludedFromTotals());
+        CHECK_NEAR(static_cast<double>(loaded.getWallets().at("BTC").getBalance()), 100.0, 1e-12);
+    }
+    SECTION("a wallet store truncated mid-record reads as absent (the loader guard)");
+    {
+        // [dir] still holds the v4 store of the first section: cut the
+        // wallet file mid-record (20 bytes from the end lands inside the
+        // first transaction's string region) into a side-by-side dir.
+        const std::string cut = dir + "cut/";
+        std::filesystem::remove_all(cut);
+        std::filesystem::create_directories(cut);
+        std::ifstream in(dir + "wallets", std::ios::binary);
+        std::istreambuf_iterator<char> inBegin(in), inEnd;
+        const std::vector<char> all(inBegin, inEnd);
+        const size_t keep = all.size() - 20;
+        std::ofstream out(cut + "wallets", std::ios::binary | std::ios::trunc);
+        out.write(all.data(), static_cast<std::streamsize>(keep));
+        for (const char *name: {"state", "cardWallets"}) {
+            std::filesystem::copy(dir + name, cut + name,
+                                  std::filesystem::copy_options::overwrite_existing);
+        }
+        // The reader refuses the half-read store...
+        std::vector<WalletStruct> out2;
+        CHECK(BinaryUtil::readWalletStore(cut + "wallets", out2) == 0);
+        CHECK(out2.empty());
+        // ...and the loader treats an inconsistent store as absent.
+        TransactionManager tm2;
+        tm2.loadData(cut);
+        const auto st = tm2.getTransactionManagerState();
+        CHECK(!st.hasTxData);
+        CHECK(tm2.getWallets().empty());
+        CHECK(tm2.getTransactions().empty());
+    }
     std::filesystem::remove_all(dir);
 }
 
@@ -1807,6 +1995,7 @@ static void testXmlRoundTrip() {
     tx.transactionTypeString = "crypto_sale";
     tx.transactionHash = "abcd1234";
     tx.isOutsideTransaction = true;
+    tx.excludedFromTotals = true;
     tx.notes = "";                 // empty field: prints as <notes/>, parses back empty
     std::string xml = tx.serializeToXml();
 
@@ -1833,6 +2022,7 @@ static void testXmlRoundTrip() {
     CHECK(back.transactionTypeString == "crypto_sale");
     CHECK(back.transactionHash == "abcd1234");
     CHECK(back.isOutsideTransaction);
+    CHECK(back.excludedFromTotals);
     CHECK(back.notes.empty());
 
     // A leading XML declaration must be stripped before the field scan.
@@ -2095,6 +2285,150 @@ static void testCardFixture() {
     CHECK_NEAR(bal, 72.0, 1e-9);
 }
 
+// The Curve card path: 11-column fixture with per-field mapping, the
+// REFUNDED/Declined exclusion (rows kept, totals + ledger flow skipped),
+// and the full persistence round trip of the exclusion flag.
+static void testCurveCard() {
+    SECTION("fixture: Curve card export (REFUNDED/Declined exclusion)");
+    auto lines = loadFixture("curve_card.csv");
+    if (lines.empty()) return;
+    TransactionParser parser(lines);
+    parser.parseFromCsv(Mode::CurveCard);
+    const auto &txs = parser.getTransactions();
+    CHECK(parser.getFailedLines() == 1);   // 10-field line without trailing comma
+    CHECK(txs.size() == 7);   // 8 data lines, one broken skipped
+
+    // Line 0 - plain EUR purchase, full date+time form
+    {
+        const auto &d = txs[0].getTransactionData();
+        CHECK(d.transactionDate.tm_year == 2026 - 1900);
+        CHECK(d.transactionDate.tm_mon == 2);
+        CHECK(d.transactionDate.tm_mday == 1);
+        CHECK(d.transactionDate.tm_hour == 9);
+        CHECK(d.transactionDate.tm_min == 30);
+        CHECK(d.description == "Supermarket");
+        CHECK(txs[0].getTransactionTypeString() == "Supermarket");   // merchant routes the wallet
+        CHECK(d.currencyType == "EUR");
+        CHECK_NEAR(txs[0].getAmount(), 42.50, 1e-12);
+        CHECK_NEAR(txs[0].getNativeAmount(), 42.50, 1e-12);
+        CHECK(txs[0].getToCurrencyType() == "EUR");
+        CHECK(d.transactionHash == "Curve Blue1111");
+        CHECK(d.notes == "Groceries: Basket");
+        CHECK(txs[0].getTransactionType() == STRING);
+        CHECK(!txs[0].isExcludedFromTotals());
+    }
+    // Line 1 - foreign spend: the native amount comes from the foreign column
+    CHECK_NEAR(txs[1].getAmount(), 125.00, 1e-12);
+    CHECK_NEAR(txs[1].getNativeAmount(), 118.00, 1e-12);
+    CHECK(txs[1].getToCurrencyType() == "USD");
+
+    // Line 2 - date-only (midnight) + empty foreign amount falls back to the
+    // funding amount; the trailing-comma Notes split is padded back
+    {
+        const auto &d = txs[2].getTransactionData();
+        CHECK(d.transactionDate.tm_hour == 0);
+        CHECK(d.transactionDate.tm_min == 0);
+        CHECK(d.transactionDate.tm_sec == 0);
+        CHECK_NEAR(txs[2].getNativeAmount(), 15.25, 1e-12);
+        CHECK(d.notes == "Groceries: ");   // unconditional "Category: " concat
+    }
+
+    // Lines 3/4 - the exclusion set; lines 5/6 stay included
+    CHECK(txs[3].isExcludedFromTotals());
+    CHECK(txs[4].isExcludedFromTotals());
+    CHECK(!txs[5].isExcludedFromTotals());
+    CHECK(!txs[6].isExcludedFromTotals());
+    // Line 5 - thousands-separator amounts; line 6 - quoted merchant with a comma
+    CHECK_NEAR(txs[5].getAmount(), 1234.56, 1e-12);
+    CHECK(txs[6].getTransactionData().description == "Burger King, Downtown");
+
+    // Mode dispatch: the card bucket only
+    TransactionManager tm;
+    tm.setTransactions(parser.getTransactions(), Mode::CurveCard);
+    tm.processTransactions();
+    auto state = tm.getTransactionManagerState();
+    CHECK(state.hasCardTxData);
+    CHECK(!state.hasTxData);
+    CHECK(tm.getActiveModes() == 2);
+
+    // One merchant wallet per Type; the empty "EUR -> EUR" special wallet is
+    // pruned by the empty-wallet cleanup (no row of this fixture routes to it)
+    const auto &cw = tm.getCardWallets();
+    CHECK(cw.size() == 6);
+    double spent = 0.0, bal = 0.0;
+    for (const auto &wc: cw) {
+        spent += wc.second.getMoneySpent();
+        bal += wc.second.getBalance();
+    }
+    // The REFUNDED (42.50) and Declined (10.00) rows are excluded:
+    // spent = 42.50 + 118.00 + 15.25 + 1234.56 + 25.00
+    // bal   = that + the 125.00 funding amount of the foreign-spend row
+    CHECK_NEAR(spent, 1435.31, 1e-9);
+    CHECK_NEAR(bal, 1442.31, 1e-9);
+
+    // Excluded rows: present in the card list AND in the merchant wallet's
+    // list, but they apply no totals and no daily-series ledger flow
+    {
+        CHECK(tm.getCardTransactions().size() == 7);
+        const auto &sw = cw.at("Supermarket");
+        CHECK(sw.getTransactions().size() == 2);
+        CHECK_NEAR(sw.getBalance(), 42.50, 1e-9);
+        CHECK_NEAR(sw.getMoneySpent(), 42.50, 1e-9);
+        const auto &ledger = sw.getLedger();
+        CHECK(ledger.size() == 2);
+        CHECK_NEAR(ledger[1].balance, 0.0, 1e-12);
+        CHECK_NEAR(ledger[1].spent, 0.0, 1e-12);
+        CHECK_NEAR(ledger[1].bonus, 0.0, 1e-12);
+        const auto &cl = cw.at("Club Entry");
+        CHECK(cl.getTransactions().size() == 1);
+        CHECK_NEAR(cl.getBalance(), 0.0, 1e-9);
+        CHECK_NEAR(cl.getMoneySpent(), 0.0, 1e-9);
+    }
+
+    // The XML export carries the flag and reads it back
+    {
+        const std::string refundedXml = txs[3].getTransactionData().serializeToXml();
+        CHECK(refundedXml.find("<excludedFromTotals>true</excludedFromTotals>") !=
+              std::string::npos);
+        const std::string normalXml = txs[0].getTransactionData().serializeToXml();
+        CHECK(normalXml.find("<excludedFromTotals>false</excludedFromTotals>") !=
+              std::string::npos);
+        TransactionData fromRefunded;
+        fromRefunded.deserializeFromXml(refundedXml);
+        CHECK(fromRefunded.excludedFromTotals);
+        TransactionData fromNormal;
+        fromNormal.deserializeFromXml(normalXml);
+        CHECK(!fromNormal.excludedFromTotals);
+    }
+
+    // v3 save/load round trip: rows, flag and totals survive
+    {
+        const std::string dir = (std::filesystem::temp_directory_path() /
+                                 "nf_tx_core_curve_tests").string() + "/";
+        std::filesystem::remove_all(dir);
+        std::filesystem::create_directories(dir);
+        CHECK(tm.saveData(dir));
+        CHECK(tm.checkSavedData(dir));
+
+        TransactionManager loaded;
+        loaded.loadData(dir);
+        CHECK(loaded.getCardTransactions().size() == 7);
+        int excluded = 0;
+        for (const auto &tx: loaded.getCardTransactions())
+            if (tx.isExcludedFromTotals()) excluded++;
+        CHECK(excluded == 2);
+        double spentLoaded = 0.0, balLoaded = 0.0;
+        for (const auto &wc: loaded.getCardWallets()) {
+            spentLoaded += wc.second.getMoneySpent();
+            balLoaded += wc.second.getBalance();
+        }
+        CHECK_NEAR(spentLoaded, 1435.31, 1e-9);
+        CHECK_NEAR(balLoaded, 1442.31, 1e-9);
+        CHECK(loaded.getCardWallets().at("Supermarket").getTransactions().size() == 2);
+        std::filesystem::remove_all(dir);
+    }
+}
+
 static void testKrakenFixture() {
     SECTION("fixture: Kraken trade CSV");
     auto lines = loadFixture("kraken_trades.csv");
@@ -2303,6 +2637,7 @@ int main() {
     testBinaryUtil();
     testUnlimitedPersistence();
     testLegacyV2Migration();
+    testSaveFormatV3LegacyRead();
     testPriceCache();
     testXmlSerialization();
     testFileLogLevels();
@@ -2320,6 +2655,7 @@ int main() {
     testThreadStress();
     testCdcCryptoFixture();
     testCardFixture();
+    testCurveCard();
     testKrakenFixture();
     testBlockPitFixture();
     testImportStateSemantics();

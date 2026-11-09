@@ -26,6 +26,7 @@ struct TransactionStruct {
     std::string transactionTypeString = {};
     std::string transactionHash = {};
     bool isOutsideTransaction = false;
+    bool excludedFromTotals = false;
     std::string notes = {};
 };
 

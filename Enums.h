@@ -40,7 +40,11 @@ enum Mode {
     Default,
     Custom,
     Kraken,
-    BlockPit
+    BlockPit,
+    // The ordinal IS the contract: the Kotlin side and the tester pass
+    // plain ints, so new modes can only be appended at the tail (never
+    // reordered or inserted).
+    CurveCard
 };
 
 

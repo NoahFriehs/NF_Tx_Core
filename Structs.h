@@ -29,6 +29,7 @@ struct TransactionData {
     std::string transactionTypeString = {};
     std::string transactionHash = {};
     bool isOutsideTransaction = false;
+    bool excludedFromTotals = false;
     std::string notes = {};
 
     [[nodiscard]] TransactionStruct getTransactionStruct() const {
@@ -49,6 +50,7 @@ struct TransactionData {
         transactionStruct.transactionTypeString = transactionTypeString;
         transactionStruct.transactionHash = transactionHash;
         transactionStruct.isOutsideTransaction = isOutsideTransaction;
+        transactionStruct.excludedFromTotals = excludedFromTotals;
         transactionStruct.notes = notes;
         return transactionStruct;
     }
@@ -97,6 +99,7 @@ struct TransactionData {
         addNode("tTS", transaction.transactionTypeString);
         addNode("transactionHash", transaction.transactionHash);
         addNode("outTx", transaction.isOutsideTransaction ? "true" : "false");
+        addNode("excludedFromTotals", transaction.excludedFromTotals ? "true" : "false");
         addNode("notes", transaction.notes);
 
         std::string xmlString;
@@ -160,6 +163,7 @@ struct TransactionData {
         transactionHash = getTagValue("transactionHash");
         std::string outTx = getTagValue("outTx");
         isOutsideTransaction = (outTx == "true");
+        excludedFromTotals = (getTagValue("excludedFromTotals") == "true");
         notes = getTagValue("notes");
     }
 

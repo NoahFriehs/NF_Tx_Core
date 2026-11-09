@@ -1,6 +1,6 @@
-// Native binary persistence (format v3).
+// Native binary persistence (format v4; v2/v3 readable legacy).
 //
-// The v3 format is an explicit, portable byte layout:
+// The portable layout (v3/v4) is an explicit byte layout:
 //   * all integers   : fixed width, little-endian
 //   * all money      : 8-byte IEEE-754 double (the app never produces
 //                      sub-double precision, so no ABI-dependent
@@ -10,15 +10,28 @@
 //   * all dates      : wall-clock fields (y/m/d/h/min/s), no time zone,
 //                      exactly as displayed
 //
-// Every file starts with the 5-byte header "CWCP" + version(3). The
-// header carries no ABI data, so the format is portable between
-// architectures, compilers and endiannesses.
+// Every file starts with the 5-byte header "CWCP" + version. The header
+// carries no ABI data, so the format is portable between architectures,
+// compilers and endiannesses.
 //
-// Old v2 files (raw memory dumps of fixed-size C structs) can still be
-// READ so user data survives the upgrade; the next save rewrites them
-// in v3. Reading v2 requires the same long double ABI that wrote the
-// file (checked via the v2 header) - a v2 file from another ABI is
-// rejected, exactly like before.
+// Version history (the reader accepts 2, 3 and 4; writes are always v4):
+//   v2 - raw memory dumps of fixed-size C structs. Reading requires the
+//        writing machine's long double ABI (checked via the v2 header);
+//        a v2 file from another ABI is rejected.
+//   v3 - the first portable layout; the transaction record carries ONE
+//        flag byte (isOutsideTransaction). This is the layout the
+//        pre-Curve device builds wrote, so it must keep reading.
+//   v4 - current: the transaction record gained the excludedFromTotals
+//        flag byte after isOutsideTransaction. The bump exists because
+//        the change sits MID-RECORD: under a shared version number an
+//        old v3 file would not be distinguishable and its strings would
+//        misparse instead of the layout being selected by version.
+//
+// Legacy v2/v3 files are READ (so user data survives an app update) and
+// re-saved in v4 on the next store. A wallet store that fails MID-RECORD
+// reads as UNREADABLE (0 + an error log; the loader treats the store as
+// absent) - never as a silent half-state. The app's guarded re-import is
+// the recovery (Room fallback + the fast-start re-parse).
 //
 // Writes are atomic: data goes to "<name>.tmp" and is renamed over the
 // target, so a crash mid-save can never corrupt the previous file.
@@ -43,7 +56,19 @@ namespace BinaryUtil {
 
 inline constexpr char kMagic[4] = {'C', 'W', 'C', 'P'};
 inline constexpr uint8_t kVersionV2 = 2;
+// First portable layout: ONE flag byte in the transaction record.
+// Read-only legacy (see the header version history).
 inline constexpr uint8_t kVersionV3 = 3;
+// Current layout: + the excludedFromTotals flag byte in the record.
+inline constexpr uint8_t kVersionV4 = 4;
+
+// The transaction record layout of a readable file version (v2 is
+// converted struct-by-struct and never reaches the record reader).
+enum class TxRecordLayout { V3, V4 };
+
+inline TxRecordLayout txLayoutOf(int version) {
+    return version == kVersionV4 ? TxRecordLayout::V4 : TxRecordLayout::V3;
+}
 
 // ---------------------------------------------------------------------------
 // Low-level little-endian writer
@@ -113,7 +138,7 @@ public:
     bool ok() const { return ok_; }
     size_t remaining() const { return pos_ <= size_ ? size_ - pos_ : 0; }
 
-    // Read the CWCP header. Returns the version (2 or 3) or 0, and on
+    // Read the CWCP header. Returns the version (2, 3 or 4) or 0, and on
     // success leaves the stream positioned right after the header. For
     // v2 the long double ABI of the writing machine is validated here.
     int peekVersion() {
@@ -125,11 +150,11 @@ public:
         }
         uint8_t version = 0;
         if (!raw(&version, 1)) return 0;
-        if (version > kVersionV3) {
+        if (version > kVersionV4) {
             FileLog::w("BinaryUtil", "Unsupported version " + std::to_string(version));
             return 0;
         }
-        if (version == kVersionV3) {
+        if (version >= kVersionV3) {
             return version;
         }
         // v2 header layout: [magic][int version][int longDoubleSize]
@@ -289,6 +314,7 @@ inline bool readDate(Reader &r, std::tm &tm) {
     return true;
 }
 
+// The writer always emits the CURRENT layout (v4: two flag bytes).
 inline void writeTransaction(Writer &w, const TransactionData &t) {
     w.i32(t.transactionId);
     w.i32(t.walletId);
@@ -300,6 +326,7 @@ inline void writeTransaction(Writer &w, const TransactionData &t) {
     w.f64(static_cast<double>(t.nativeAmount));
     w.f64(static_cast<double>(t.amountBonus));
     w.u8(t.isOutsideTransaction ? 1 : 0);
+    w.u8(t.excludedFromTotals ? 1 : 0);
     w.string(t.description);
     w.string(t.currencyType);
     w.string(t.toCurrencyType);
@@ -308,7 +335,9 @@ inline void writeTransaction(Writer &w, const TransactionData &t) {
     w.string(t.notes);
 }
 
-inline bool readTransaction(Reader &r, TransactionData &t) {
+// [layout] selects the record shape of the FILE (the v3 record has no
+// excludedFromTotals byte; the version byte decides which one applies).
+inline bool readTransaction(Reader &r, TransactionData &t, TxRecordLayout layout) {
     if (!r.i32(t.transactionId)) return false;
     if (!r.i32(t.walletId)) return false;
     if (!r.i32(t.fromWalletId)) return false;
@@ -326,6 +355,13 @@ inline bool readTransaction(Reader &r, TransactionData &t) {
     uint8_t outside = 0;
     if (!r.u8(outside)) return false;
     t.isOutsideTransaction = outside != 0;
+    if (layout == TxRecordLayout::V4) {
+        // The excludedFromTotals byte exists only in the v4 record; a v3
+        // file has none, so the flag defaults to false for it.
+        uint8_t excluded = 0;
+        if (!r.u8(excluded)) return false;
+        t.excludedFromTotals = excluded != 0;
+    }
     if (!r.string(t.description)) return false;
     if (!r.string(t.currencyType)) return false;
     if (!r.string(t.toCurrencyType)) return false;
@@ -351,6 +387,7 @@ inline TransactionData toTransactionData(const TransactionStruct &s) {
     d.transactionTypeString = s.transactionTypeString;
     d.transactionHash = s.transactionHash;
     d.isOutsideTransaction = s.isOutsideTransaction;
+    d.excludedFromTotals = s.excludedFromTotals;
     d.notes = s.notes;
     return d;
 }
@@ -370,16 +407,24 @@ inline void writeWallet(Writer &w, const WalletStruct &wlt) {
     }
 }
 
-// Smallest valid encoded transaction: fixed fields + 6 zero-length strings.
-inline constexpr size_t kMinTransactionSize = 16 /*i32x4*/ + 9 /*date*/ + 32 /*f64x4*/ + 1 /*flags*/ + 24 /*string lens*/;
+// Smallest valid encoded transaction, per layout: fixed fields + 6
+// zero-length strings + the layout's flag bytes (the v3/v4 difference
+// is exactly ONE flag byte - it sits mid-record, which is why the
+// layout is version-selected rather than probed).
+inline constexpr size_t kMinTransactionSizeV3 =
+        16 /*i32x4*/ + 9 /*date*/ + 32 /*f64x4*/ + 1 /*flags*/ + 24 /*string lens*/;
+inline constexpr size_t kMinTransactionSizeV4 =
+        16 /*i32x4*/ + 9 /*date*/ + 32 /*f64x4*/ + 2 /*flags*/ + 24 /*string lens*/;
 // Smallest valid encoded wallet: fixed fields + 2 empty strings + zero
 // transactions. The count clamp must bound the count from ABOVE, so the
 // worst case (no transactions) is what keeps it safe.
 inline constexpr size_t kMinWalletSize = 4 /*id*/ + 32 /*4xf64*/ + 1 /*flags*/ + 4 + 4 /*2 string lens*/ + 4 /*tx count*/;
 
-inline bool readTransactionBody(Reader &r, TransactionData &t) { return readTransaction(r, t); }
+inline bool readTransactionBody(Reader &r, TransactionData &t) {
+    return readTransaction(r, t, TxRecordLayout::V4);
+}
 
-inline bool readWalletBody(Reader &r, WalletStruct &w) {
+inline bool readWalletBody(Reader &r, WalletStruct &w, TxRecordLayout layout) {
     int32_t id = 0;
     double balance = 0, nativeBalance = 0, bonusBalance = 0, moneySpent = 0;
     uint8_t flags = 0;
@@ -397,20 +442,23 @@ inline bool readWalletBody(Reader &r, WalletStruct &w) {
     w.isOutsideWallet = (flags & 1) != 0;
     if (!r.string(w.currencyType)) return false;
     if (!r.string(w.notes)) return false;
-    const uint32_t txCount = r.count(static_cast<int>(kMinTransactionSize));
+    const size_t minTx =
+            layout == TxRecordLayout::V4 ? kMinTransactionSizeV4 : kMinTransactionSizeV3;
+    const uint32_t txCount = r.count(static_cast<int>(minTx));
     w.transactions.reserve(txCount);
     for (uint32_t i = 0; i < txCount; i++) {
         TransactionData tx;
-        if (!readTransaction(r, tx)) return false;
+        if (!readTransaction(r, tx, layout)) return false;
         w.transactions.push_back(tx.getTransactionStruct());
     }
     return true;
 }
 
 // ---------------------------------------------------------------------------
-// Atomic file write: header, callback, then rename .tmp over the target.
+// Atomic file write: header (CURRENT version), callback, rename .tmp over
+// the target.
 // ---------------------------------------------------------------------------
-inline bool writeFileV3(const std::string &path, const std::function<bool(Writer &)> &emit) {
+inline bool writeFileCurrent(const std::string &path, const std::function<bool(Writer &)> &emit) {
     const std::string tmpPath = path + ".tmp";
     {
         std::ofstream f(tmpPath, std::ios::binary | std::ios::trunc);
@@ -419,7 +467,7 @@ inline bool writeFileV3(const std::string &path, const std::function<bool(Writer
             return false;
         }
         f.write(kMagic, 4);
-        const char v = static_cast<char>(kVersionV3);
+        const char v = static_cast<char>(kVersionV4);
         f.write(&v, 1);
         Writer w(f);
         if (!emit(w) || !w.ok()) {
@@ -443,7 +491,7 @@ inline bool writeFileV3(const std::string &path, const std::function<bool(Writer
 }
 
 inline bool writeWalletStore(const std::string &path, const std::vector<WalletStruct> &in) {
-    return writeFileV3(path, [&in](Writer &w) {
+    return writeFileCurrent(path, [&in](Writer &w) {
         w.count(in.size());
         for (const auto &wallet: in) writeWallet(w, wallet);
         return w.ok();
@@ -451,7 +499,7 @@ inline bool writeWalletStore(const std::string &path, const std::vector<WalletSt
 }
 
 inline bool writeStateFile(const std::string &path, const TransactionManagerState &st) {
-    return writeFileV3(path, [&st](Writer &w) {
+    return writeFileCurrent(path, [&st](Writer &w) {
         w.u8(static_cast<uint8_t>((st.hasTxData ? 1 : 0) | (st.hasCardTxData ? 2 : 0) |
                                          (st.isReadyFlag ? 4 : 0)));
         w.i32(st.txIdCounter);
@@ -569,25 +617,47 @@ inline WalletStruct convertWallet(const V2::Wallet &v) {
 } // namespace V2
 
 // ---------------------------------------------------------------------------
-// File readers (v2 or v3 auto-detect)
+// File readers (v2, v3, or v4 auto-detect)
 // ---------------------------------------------------------------------------
 
-// Returns the version that was read (2/3) or 0 (missing/invalid -> out empty).
+// Returns the version that was read (2/3/4) or 0 (missing/invalid, or a
+// MID-RECORD failure -> out empty).
 inline int readWalletStore(const std::string &path, std::vector<WalletStruct> &out) {
     out.clear();
     Reader r;
     if (!r.open(path)) return 0;
     const int version = r.peekVersion();
     if (version == 0) return 0;
-    if (version == kVersionV3) {
-        // kMinWalletSize bounds even a wallet with zero transactions, so any
-        // real file can hold at least as many wallets as `count` allows.
+    if (version >= kVersionV3) {
+        // The record layout follows the file's OWN version (the v3 record
+        // has one flag byte, the v4 two). kMinWalletSize bounds even a
+        // wallet with zero transactions, so any real file can hold at
+        // least as many wallets as `count` allows.
+        const TxRecordLayout layout = txLayoutOf(version);
         const uint32_t count = r.count(static_cast<int>(kMinWalletSize));
-        FileLog::d("BinaryUtil", "Reading v3 wallet store " + path);
+        FileLog::d("BinaryUtil", "Reading v" + std::to_string(version) + " wallet store " + path);
+        bool complete = true;
         for (uint32_t i = 0; i < count; i++) {
             WalletStruct w;
-            if (!readWalletBody(r, w)) break;
+            if (!readWalletBody(r, w, layout)) {
+                // A mid-record failure leaves a HALF-READ store: past the
+                // failed record the stream is misaligned (a version/layout
+                // mismatch surfaces exactly here, and so does corruption).
+                // The remainder is unusable, so the store reads as
+                // unreadable - never a silent half-state (the loader
+                // treats the store as absent; the app's guarded re-import
+                // is the recovery).
+                complete = false;
+                break;
+            }
             out.push_back(std::move(w));
+        }
+        if (!complete) {
+            FileLog::e("BinaryUtil",
+                       "Wallet store " + path + " (v" + std::to_string(version) +
+                               ") failed mid-record; treating the store as unreadable");
+            out.clear();
+            return 0;
         }
         return version;
     }
@@ -611,13 +681,15 @@ inline int readWalletStore(const std::string &path, std::vector<WalletStruct> &o
     return version;
 }
 
-// Returns the version that was read (2/3) or 0 (out left default).
+// Returns the version that was read (2/3/4) or 0 (out left default).
 inline int readStateFile(const std::string &path, TransactionManagerState &st) {
     Reader r;
     if (!r.open(path)) return 0;
     const int version = r.peekVersion();
     if (version == 0) return 0;
-    if (version == kVersionV3) {
+    // The state file layout is identical for v3 and v4 (only the
+    // transaction RECORD differs between the two versions).
+    if (version >= kVersionV3) {
         uint8_t flags = 0;
         if (!r.u8(flags)) return 0;
         st.hasTxData = (flags & 1) != 0;

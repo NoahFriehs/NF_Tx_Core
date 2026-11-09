@@ -39,6 +39,15 @@ bool Wallet::addTransaction(BaseTransaction &transaction, bool overrideTTS) {
     transaction.setWalletId(walletId);
     if (overrideTTS) transaction.setTransactionTypeString(currencyType);
     transactions.push_back(transaction);
+    if (transaction.isExcludedFromTotals()) {
+        // Excluded row (Curve REFUNDED / Declined parity): it stays in the
+        // transaction list but applies no totals. The ZERO ledger entry
+        // keeps ledger parallel to transactions (removeTransaction and the
+        // daily-series size check depend on that) while contributing no
+        // flow to the replayed series.
+        ledger.push_back({0.0L, 0.0L, 0.0L});
+        return true;
+    }
     balance += transaction.getAmount();
     moneySpent += transaction.getNativeAmount();
     bonusBalance += transaction.getAmountBonus();

@@ -121,6 +121,27 @@ std::tm TimestampConverter::stringToTmBlockPit(const std::string &timestamp_str)
     return timestamp_tm;
 }
 
+std::tm TimestampConverter::stringToTmCurve(const std::string &timestamp_str) {
+    if (timestamp_str.empty()) {
+        FileLog::w("TimestampConverter", "Empty timestamp string.");
+        throw std::runtime_error("Empty timestamp string.");
+    }
+    // Full form first ("YYYY-MM-DD HH:MM:SS"), then the date-only form the
+    // Curve header promises ("YYYY-MM-DD", midnight).
+    std::tm timestamp_tm = {};
+    std::istringstream ss(timestamp_str);
+    ss >> std::get_time(&timestamp_tm, "%Y-%m-%d %H:%M:%S");
+    if (!ss.fail()) return timestamp_tm;
+
+    timestamp_tm = {};   // reset the half-parsed full-form attempt
+    std::istringstream ssDateOnly(timestamp_str);
+    ssDateOnly >> std::get_time(&timestamp_tm, "%Y-%m-%d");
+    if (ssDateOnly.fail()) {
+        throw std::runtime_error("Failed to parse Curve timestamp.");
+    }
+    return timestamp_tm;
+}
+
 std::string TimestampConverter::tmToString(const std::tm &timestamp_tm) {
     std::ostringstream ss;
     ss << std::put_time(&timestamp_tm, "%Y-%m-%d %H:%M:%S");

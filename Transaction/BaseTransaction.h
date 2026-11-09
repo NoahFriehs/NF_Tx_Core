@@ -22,6 +22,9 @@ public:
     //! Parse the card transaction string
     void parseCard(const std::string &txString);
 
+    //! Parse the Curve card export row (11 columns)
+    void parseCurve(const std::string &txString);
+
     void parseKraken(const std::string &txString);
 
     void parseBlockPit(const std::string &txString);
@@ -70,6 +73,10 @@ public:
 
     //! Return the toAmount
     [[nodiscard]] long double getToAmount() const;
+
+    //! Return if the transaction is excluded from the wallet totals
+    //! (kept in the lists; the row applies no balance/spend/bonus delta)
+    [[nodiscard]] bool isExcludedFromTotals() const;
 
     //! Return the transaction data
     TransactionData getTransactionData() const;
@@ -123,6 +130,7 @@ private:
 
     std::string transactionHash = {};
     bool isOutsideTransaction = false;
+    bool excludedFromTotals = false;   // wallet totals skip this row
     std::string notes = {};
 
 public:

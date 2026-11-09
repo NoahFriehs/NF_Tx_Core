@@ -870,6 +870,7 @@ void TransactionManager::setTransactions(std::vector<BaseTransaction> &transacti
             hasTxData = true;
             break;
         case Card:
+        case CurveCard:
             cardTransactions = transactions_;
             hasCardTxData = true;
             break;
@@ -1004,7 +1005,7 @@ bool TransactionManager::saveData(const std::string &dirPath) {
         return false;
     }
     if (upgradedLegacy_) {
-        FileLog::i("TransactionManager", "Legacy v2 save files upgraded to format v3");
+        FileLog::i("TransactionManager", "Legacy save files (v2/v3) upgraded to format v4");
         upgradedLegacy_ = false;
     }
     FileLog::i("TransactionManager", "Finished saving data");
@@ -1021,14 +1022,34 @@ void TransactionManager::loadData(const std::string &dirPath) {
     std::vector<WalletStruct> cardWalletStructVector;
     TransactionManagerState state;
 
-    // v3 files are read as-is; legacy v2 files (same long double ABI) are
-    // converted, and re-saved in v3 on the next store.
+    // v3/v4 files are read as-is (the record layout follows each file's
+    // own version byte); legacy v2 files (same long double ABI) are
+    // converted, and any pre-v4 store is re-saved in v4 on the next store.
     const int stateVersion = BinaryUtil::readStateFile(dirPath + "state", state);
     const int walletVersion = BinaryUtil::readWalletStore(dirPath + "wallets", walletStructVector);
     const int cardVersion = BinaryUtil::readWalletStore(dirPath + "cardWallets", cardWalletStructVector);
-    upgradedLegacy_ = stateVersion == BinaryUtil::kVersionV2 ||
-                      walletVersion == BinaryUtil::kVersionV2 ||
-                      cardVersion == BinaryUtil::kVersionV2;
+
+    // A healthy store has ALL THREE files read clean (saveData writes the
+    // set atomically). Any other combination - a file missing, or a
+    // MID-RECORD failure (the reader returns 0 + an error log) - is an
+    // inconsistent store: treat it as absent instead of loading a
+    // half-state. The app's guarded re-import is the recovery (Room
+    // fallback + the fast-start re-parse).
+    if (stateVersion == 0 || walletVersion == 0 || cardVersion == 0) {
+        if (stateVersion > 0 || walletVersion > 0 || cardVersion > 0) {
+            FileLog::e("TransactionManager",
+                       "Save store inconsistent (versions state/wallets/cardWallets: " +
+                       std::to_string(stateVersion) + "/" + std::to_string(walletVersion) +
+                       "/" + std::to_string(cardVersion) + "); treating the store as absent");
+        }
+        setTransactionManagerState(TransactionManagerState());
+        FileLog::i("TransactionManager", "No usable save store; continuing with empty state");
+        return;
+    }
+
+    upgradedLegacy_ = stateVersion < BinaryUtil::kVersionV4 ||
+                      walletVersion < BinaryUtil::kVersionV4 ||
+                      cardVersion < BinaryUtil::kVersionV4;
 
     setTransactionManagerState(state);
 
