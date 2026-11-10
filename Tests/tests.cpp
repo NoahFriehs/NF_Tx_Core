@@ -1965,13 +1965,21 @@ static void testParseBudget() {
     TransactionParser parserAborted(data);
     parserAborted.parseFromCsv(Mode::CDC);
     CHECK(parserAborted.getTransactions().empty());
+    // The cut becomes queryable: both data lines were never parsed (the
+    // header is stripped from the loop input before the first line).
+    CHECK(TransactionManager::wasLastParseCutByBudget());
+    CHECK(TransactionManager::lastParseUnprocessedRows() == 2);
 
-    // No budget: everything parses normally.
-    TransactionManager::setParseBudgetMs(0);
+    // A fresh parse unit (the positive budget the app always sends) resets
+    // the result state: the normal parse of the SAME fixture reports no
+    // cut - the flags never leak across parses.
+    TransactionManager::setParseBudgetMs(120000);
     CHECK(!TransactionManager::parseBudgetExceeded());
     auto tmOk = buildTmFromCdcLines(data);
     CHECK(tmOk->getTransactions().size() == 2);
     CHECK(tmOk->getWallets().size() == 2);
+    CHECK(!TransactionManager::wasLastParseCutByBudget());
+    CHECK(TransactionManager::lastParseUnprocessedRows() == 0);
 }
 
 static void testXmlRoundTrip() {
@@ -2145,14 +2153,22 @@ static void testParseBudgetWalletBuildAbort() {
     CHECK(allEmpty);                             // nothing attached to any wallet
     CHECK_NEAR(tm->getTotalMoneySpent(), 0.0, 1e-12);
     CHECK(tm->isReady());                        // pipeline completed, just with no data
+    // The cut reports the AGGREGATION stop: every row was already parsed,
+    // so the unprocessed count stays 0 (that is what separates this
+    // wording from a parser cut).
+    CHECK(TransactionManager::wasLastParseCutByBudget());
+    CHECK(TransactionManager::lastParseUnprocessedRows() == 0);
     // Same payload with a clean budget yields the full state (the abort
-    // changed the outcome, not the data).
-    TransactionManager::setParseBudgetMs(0);
+    // changed the outcome, not the data) - and the fresh parse unit
+    // resets the result state again.
+    TransactionManager::setParseBudgetMs(120000);
     auto tmOk = buildTmFromCdcLines(data);
     int attached = 0;
     for (const auto &ws: tmOk->getWallets())
         attached += static_cast<int>(ws.second.getTransactions().size());
     CHECK(attached == 2);
+    CHECK(!TransactionManager::wasLastParseCutByBudget());
+    CHECK(TransactionManager::lastParseUnprocessedRows() == 0);
 }
 
 static void testThreadLocalBudgetIsolation() {

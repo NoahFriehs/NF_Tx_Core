@@ -46,6 +46,19 @@ void loadData(const std::string &dirPath);
 //! \brief Returns the active modes. (1 = Crypto, 2 = Card, 3 = Crypto + Card)
 int getActiveModes();
 
+//! \brief 1 when the last parse on the calling thread was cut short by the
+//! hard parse budget, 0 otherwise (or when no parse ran yet on this thread).
+//! The state is per-thread and per-parse - the budget setter resets it, so
+//! it must be read on the parse thread right after initWithData /
+//! appendWithData returned.
+int lastParseBudgetCut(void);
+
+//! \brief Rows of the last (cut) parse the budget prevented from reading:
+//! the parser stop reports the input rows never read (the cut row
+//! included); a wallet-build stop reports 0 (every row was parsed, the
+//! aggregation stopped). Read it together with lastParseBudgetCut.
+int lastParseUnprocessedRows(void);
+
 //void calculate();
 
 //! \brief Resets the library.

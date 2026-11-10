@@ -85,6 +85,17 @@ public:
 
     static bool parseBudgetExceeded();
 
+    //! Record that the parse running on the current thread was cut by the
+    //! hard budget. unprocessedRows: the input rows the parser never read,
+    //! or 0 when every row was parsed but the wallet build stopped.
+    static void markLastParseCut(int unprocessedRows);
+
+    //! 1 when the last parse on the current thread was cut by the budget.
+    static bool wasLastParseCutByBudget();
+
+    //! Input rows the budget prevented from reading in the last (cut) parse.
+    static int lastParseUnprocessedRows();
+
     //! Return a snapshot of the serializable state
     TransactionManagerState getTransactionManagerState();
 
@@ -259,6 +270,12 @@ public:
 private:
     static thread_local long long t_parseBudgetMs;
     static thread_local std::chrono::steady_clock::time_point t_parseDeadline;
+    //! Per-parse result state (see markLastParseCut): the cut sites set it,
+    //! setParseBudgetMs with a non-zero budget resets it - a parse never
+    //! inherits a previous parse's cut state, and the end-of-parse release
+    //! call (0) keeps it readable until the caller has consumed it.
+    static thread_local bool t_lastParseCutByBudget;
+    static thread_local int t_lastParseUnprocessedRows;
 
     std::set<AppendKey> appendCryptoKeys_;
     std::set<AppendKey> appendCardKeys_;

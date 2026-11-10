@@ -29,15 +29,39 @@ TransactionManager::~TransactionManager() = default;
 
 thread_local long long TransactionManager::t_parseBudgetMs = 0;
 thread_local std::chrono::steady_clock::time_point TransactionManager::t_parseDeadline{};
+thread_local bool TransactionManager::t_lastParseCutByBudget = false;
+thread_local int TransactionManager::t_lastParseUnprocessedRows = 0;
 
 void TransactionManager::setParseBudgetMs(long long ms) {
     t_parseBudgetMs = ms;
     t_parseDeadline = std::chrono::steady_clock::now() +
                       std::chrono::milliseconds(std::max(0LL, ms));
+    if (ms != 0) {
+        // A positive budget (or the negative "already expired" test hook)
+        // starts a fresh parse unit: the result state must describe THIS
+        // parse, never a previous one. The release call (0) that ends a
+        // parse keeps the flags readable until the caller has consumed
+        // them.
+        t_lastParseCutByBudget = false;
+        t_lastParseUnprocessedRows = 0;
+    }
 }
 
 bool TransactionManager::parseBudgetExceeded() {
     return t_parseBudgetMs != 0 && std::chrono::steady_clock::now() > t_parseDeadline;
+}
+
+void TransactionManager::markLastParseCut(int unprocessedRows) {
+    t_lastParseCutByBudget = true;
+    t_lastParseUnprocessedRows = unprocessedRows;
+}
+
+bool TransactionManager::wasLastParseCutByBudget() {
+    return t_lastParseCutByBudget;
+}
+
+int TransactionManager::lastParseUnprocessedRows() {
+    return t_lastParseUnprocessedRows;
 }
 
 void TransactionManager::processTransactions() {
@@ -128,6 +152,9 @@ void TransactionManager::addTransactionsToWallets() {
 void TransactionManager::addCardTransactionsToWallets(size_t begin, size_t count) {
     if (parseBudgetExceeded()) {
         FileLog::e("TransactionManager", "Parse budget exceeded: aborting wallet build");
+        // Every row was parsed; the AGGREGATION stopped (the report keeps
+        // the count at 0 - a row count would be a lie here).
+        markLastParseCut(0);
         return;
     }
     // [begin, end): the rows assigned in THIS pass - the full bucket after
@@ -151,6 +178,9 @@ void TransactionManager::addCardTransactionsToWallets(size_t begin, size_t count
 void TransactionManager::addCDCTransactionsToWallets(size_t begin, size_t count) {
     if (parseBudgetExceeded()) {
         FileLog::e("TransactionManager", "Parse budget exceeded: aborting wallet build");
+        // Every row was parsed; the AGGREGATION stopped (the report keeps
+        // the count at 0 - a row count would be a lie here).
+        markLastParseCut(0);
         return;
     }
     const size_t end = std::min(begin + count, transactions.size());
@@ -223,6 +253,9 @@ void TransactionManager::addCDCTransactionsToWallets(size_t begin, size_t count)
 void TransactionManager::addBlockPitTransactionsToWallets(size_t begin, size_t count) {
     if (parseBudgetExceeded()) {
         FileLog::e("TransactionManager", "Parse budget exceeded: aborting wallet build");
+        // Every row was parsed; the AGGREGATION stopped (the report keeps
+        // the count at 0 - a row count would be a lie here).
+        markLastParseCut(0);
         return;
     }
     // Amounts are signed (see BaseTransaction::parseBlockPit): positive values

@@ -364,6 +364,17 @@ int getActiveModes() {
     return DataHolder::GetInstance().GetTransactionManager()->getActiveModes();
 }
 
+// The cut result is per-thread state on TransactionManager itself - no live
+// manager is needed, so these are safe to call before any init (they report
+// the not-cut defaults then).
+int lastParseBudgetCut(void) {
+    return TransactionManager::wasLastParseCutByBudget() ? 1 : 0;
+}
+
+int lastParseUnprocessedRows(void) {
+    return TransactionManager::lastParseUnprocessedRows();
+}
+
 #ifdef __ANDROID__
 
 namespace {
@@ -675,6 +686,21 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getFailedLines(JNIEnv *, 
         FileLog::e("library", "JNI getFailedLines failed: unknown error");
         return -1;
     }
+}
+
+// The last-parse cut state: static per-thread state, cannot throw (the JNI
+// functions delegate to the plain-C accessors above, one implementation).
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_wasLastParseBudgetCut(JNIEnv *, jobject) {
+    return lastParseBudgetCut() ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C"
+JNIEXPORT jint JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_getLastParseUnprocessedRows(
+        JNIEnv *, jobject) {
+    return lastParseUnprocessedRows();
 }
 
 extern "C"

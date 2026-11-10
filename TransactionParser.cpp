@@ -67,9 +67,12 @@ void TransactionParser::parseCDC() {
         cleanCsvLine(data[0]))
         data.erase(data.begin());   // remove header row, if needed
 
-    for (const auto &item: data) {
+    for (size_t row = 0; row < data.size(); ++row) {
+        const auto &item = data[row];
         if (TransactionManager::parseBudgetExceeded()) {
             FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            // The cut row itself was never parsed either.
+            TransactionManager::markLastParseCut(static_cast<int>(data.size() - row));
             break;
         }
         BaseTransaction transaction;
@@ -101,9 +104,12 @@ void TransactionParser::parseCard() {
         cleanCsvLine(data[0]))
         data.erase(data.begin());   // remove header row, if needed
 
-    for (const auto &item: data) {
+    for (size_t row = 0; row < data.size(); ++row) {
+        const auto &item = data[row];
         if (TransactionManager::parseBudgetExceeded()) {
             FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            // The cut row itself was never parsed either.
+            TransactionManager::markLastParseCut(static_cast<int>(data.size() - row));
             break;
         }
         BaseTransaction transaction;
@@ -141,9 +147,12 @@ void TransactionParser::parseCurveCard() {
     if (CURVE_HEADER == cleanCsvLine(data[0]))
         data.erase(data.begin());   // remove header row, if needed
 
-    for (const auto &item: data) {
+    for (size_t row = 0; row < data.size(); ++row) {
+        const auto &item = data[row];
         if (TransactionManager::parseBudgetExceeded()) {
             FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            // The cut row itself was never parsed either.
+            TransactionManager::markLastParseCut(static_cast<int>(data.size() - row));
             break;
         }
         BaseTransaction transaction;
@@ -175,9 +184,12 @@ void TransactionParser::parseKraken() {
         cleanCsvLine(data[0]))
         data.erase(data.begin());   // remove header row, if needed
 
-    for (const auto &item: data) {
+    for (size_t row = 0; row < data.size(); ++row) {
+        const auto &item = data[row];
         if (TransactionManager::parseBudgetExceeded()) {
             FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            // The cut row itself was never parsed either.
+            TransactionManager::markLastParseCut(static_cast<int>(data.size() - row));
             break;
         }
         BaseTransaction transaction;
@@ -213,9 +225,12 @@ void TransactionParser::parseBlockPit() {
         data.erase(data.begin());   // remove header row, if needed
     }
 
-    for (const auto &item: data) {
+    for (size_t row = 0; row < data.size(); ++row) {
+        const auto &item = data[row];
         if (TransactionManager::parseBudgetExceeded()) {
             FileLog::e("TransactionParser", "Parse budget exceeded: stopping early");
+            // The cut row itself was never parsed either.
+            TransactionManager::markLastParseCut(static_cast<int>(data.size() - row));
             break;
         }
         BaseTransaction transaction;
