@@ -9,9 +9,9 @@
 //     balance AND bonus), 500 viban (+0.3 to-side) - so each currency
 //     wallet ends at balance 500 - 125 + 50 + 150 = 575.0 and bonus 50.0;
 //     the inner EUR wallet carries 2000 * (-30) = -60000.0;
-//   * moneySpent per wallet, pinned by the verified first run (BTC/LUNA
-//     77450, ETH 77500, CRO 77550, EUR -60000 - any drift is a core
-//     regression);
+//   * moneySpent per wallet, pinned after the outside-only native booking
+//     of the withdrawal/deposit rows (BTC/LUNA 89950, ETH 90000, CRO
+//     90050, EUR -60000 - any drift is a core regression);
 //   * the parse wall clock stays under the CI-safe cap (a wide margin
 //     below the app's 120 s JNI budget) - the measured time is printed.
 //
@@ -102,7 +102,7 @@ int main() {
     // Money spent: pinned from the verified first run (regression net).
     // getMoneySpent() returns long double - printf's %f needs a double cast.
     static const char *EXPECTED_SPENT[5] = {"BTC", "ETH", "LUNA", "CRO", "EUR"};
-    static const double SPENT[5] = {77450.0, 77500.0, 77450.0, 77550.0, -60000.0};
+    static const double SPENT[5] = {89950.0, 90000.0, 89950.0, 90050.0, -60000.0};
     for (int i = 0; i < 5; ++i) {
         const double spent = w.count(EXPECTED_SPENT[i])
                 ? (double) w.at(EXPECTED_SPENT[i]).getMoneySpent() : 0.0;

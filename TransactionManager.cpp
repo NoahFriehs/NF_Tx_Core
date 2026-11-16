@@ -223,14 +223,28 @@ void TransactionManager::addCDCTransactionsToWallets(size_t begin, size_t count)
             case viban_purchase:
                 vibianPurchase(tx);
                 break;
-            case crypto_withdrawal:
-                wallet->addTransaction(tx, false);
+            case crypto_withdrawal: {
+                // The native books on the OUTSIDE wallet only (the withdraw
+                // below): a withdrawal leaves the exchange, and counting its
+                // fiat value on the inner wallet as well would double the
+                // "money spent" card. The inner row keeps its balance flow
+                // and list membership with a zeroed native so the row-based
+                // spent series agree with the wallet scalar.
+                BaseTransaction innerTx = tx;
+                innerTx.setNativeAmount(0.0L);
+                wallet->addTransaction(innerTx, false);
                 getOrCreateWallet(outWallets, tx.getCurrencyType()).withdraw(tx);
                 break;
-            case crypto_deposit:    //TODO: check if this is correct with the new data, we have no Tx for this until now
-                wallet->addTransaction(tx, false);
+            }
+            case crypto_deposit: {
+                // Incoming from the outside wallet: the same outside-only
+                // native booking as crypto_withdrawal.
+                BaseTransaction innerTx = tx;
+                innerTx.setNativeAmount(0.0L);
+                wallet->addTransaction(innerTx, false);
                 getOrCreateWallet(outWallets, tx.getCurrencyType()).withdraw(tx);
                 break;
+            }
             case crypto_viban_exchange:
                 wallet->withdraw(tx);
                 getOrCreateWallet(wallets, "EUR").addTransaction(tx, false);

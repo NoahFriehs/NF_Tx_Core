@@ -1462,7 +1462,51 @@ static void testCdcWalletSignRegression() {
         auto tm = buildTmFromCdcLines(data);
         CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), -1.0, 1e-9);
         CHECK_NEAR(tm->getOutWallets().at("BTC").getBalance(), 1.0, 1e-9);
-        CHECK_NEAR(tm->getWallets().at("BTC").getMoneySpent(), -100.0, 1e-9);
+        // The native books on the outside wallet only - the inner count
+        // would double the "money spent" card.
+        CHECK_NEAR(tm->getWallets().at("BTC").getMoneySpent(), 0.0, 1e-9);
+        CHECK_NEAR(tm->getOutWallets().at("BTC").getMoneySpent(), 100.0, 1e-9);
+    }
+
+    SECTION("CDC withdrawal keeps the inner row with a zeroed native");
+    {
+        // Witness shape (signed-negative amount, positive native): the inner
+        // list keeps the row (balance flow + membership) with native 0, the
+        // outside list keeps the parsed native, and the master row keeps it
+        // too (the UI transaction list is master-based).
+        std::vector<std::string> data{CDC_HEADER,
+                                      cdcLine("2023-04-01 12:34:56", "CRO", "-38.90", "14.19", "crypto_withdrawal")};
+        auto tm = buildTmFromCdcLines(data);
+        tm->calculateWalletBalances();
+        CHECK_NEAR(tm->getTotalMoneySpent(), 0.0, 1e-9);
+        CHECK_NEAR(tm->getWallets().at("CRO").getBalance(), -38.90, 1e-9);
+        CHECK_NEAR(tm->getOutWallets().at("CRO").getBalance(), 38.90, 1e-9);
+        CHECK_NEAR(tm->getWallets().at("CRO").getMoneySpent(), 0.0, 1e-9);
+        CHECK_NEAR(tm->getOutWallets().at("CRO").getMoneySpent(), -14.19, 1e-9);
+        auto innerRows = tm->getWallets().at("CRO").getTransactions();
+        CHECK(innerRows.size() == 1);
+        CHECK_NEAR(innerRows.front().getAmount(), -38.90, 1e-12);
+        CHECK_NEAR(innerRows.front().getNativeAmount(), 0.0, 1e-12);
+        auto outerRows = tm->getOutWallets().at("CRO").getTransactions();
+        CHECK(outerRows.size() == 1);
+        CHECK_NEAR(outerRows.front().getNativeAmount(), 14.19, 1e-12);
+        CHECK_NEAR(tm->getTransactions().front().getNativeAmount(), 14.19, 1e-12);
+        // The row-based monthly series: the zeroed inner row contributes 0.
+        auto series = tm->getMoneySpentSeries();
+        CHECK(series.size() == 1);
+        const std::string &row = series.front();
+        CHECK_NEAR(std::stold(row.substr(row.find(';') + 1)), 0.0, 1e-12);
+    }
+
+    SECTION("CDC deposit books the same outside-only native");
+    {
+        std::vector<std::string> data{CDC_HEADER,
+                                      cdcLine("2023-04-01 12:34:56", "CRO", "10.0", "2.0", "crypto_deposit")};
+        auto tm = buildTmFromCdcLines(data);
+        CHECK_NEAR(tm->getWallets().at("CRO").getMoneySpent(), 0.0, 1e-9);
+        CHECK_NEAR(tm->getOutWallets().at("CRO").getMoneySpent(), -2.0, 1e-9);
+        CHECK_NEAR(tm->getWallets().at("CRO").getBalance(), 10.0, 1e-9);
+        CHECK_NEAR(tm->getOutWallets().at("CRO").getBalance(), -10.0, 1e-9);
     }
 
     SECTION("CDC swap debited is applied as a plain addition of the signed amount");
@@ -1642,12 +1686,14 @@ static void testDailySeries() {
     CHECK(pl["2023-03-20"]== 50.0L); // 200 - 150
     CHECK(spent["2023-04-01"]== 75.0L);
     CHECK(value["2023-04-01"]== 350.0L); // 1 BTC + 5 ETH
-    CHECK(spent["2023-04-10"]== -20.0L);
+    // The withdrawal's native books on the outside wallet only: the day
+    // still emits (the balance delta is real) with zero spent flow.
+    CHECK(spent["2023-04-10"]== 0.0L);
     CHECK(value["2023-04-10"]== 250.0L); // 0 BTC + 5 ETH
-    CHECK(pl["2023-04-10"]== 45.0L); // 250 - (225 - 20)
+    CHECK(pl["2023-04-10"]== 25.0L); // 250 - (100 + 50 + 75 + 0)
     CHECK(spent["2023-04-12"]== 10.0L);
     CHECK(value["2023-04-12"]== 300.0L); // 0.5 BTC + 5 ETH
-    CHECK(pl["2023-04-12"]== 85.0L); // 300 - 215
+    CHECK(pl["2023-04-12"]== 65.0L); // 300 - 235
     CHECK(bonus["2023-04-12"]== 50.0L); // 0.5 BTC x 100
 
     // Telescoping: the series must land exactly on the card totals.
@@ -1692,13 +1738,15 @@ static void testSubDailySeries() {
     auto tm = buildTmFromCdcLines(data);
     tm->calculateWalletBalances();
 
-    // 6h slots: 06:23 + 11:59 both floor to the 06:00-12:00 slot.
+    // 6h slots: 06:23 + 11:59 both floor to the 06:00-12:00 slot. The
+    // withdrawal slot carries a balance delta but zero spent flow (its
+    // native books outside), so it stays in the wallet series but is
+    // skipped by the spent series.
     {
         auto spent = tm->getSubDailySpentSeries(6 * 3600);
-        CHECK(spent.size() == 3);
+        CHECK(spent.size() == 2);
         CHECK(spent[0] == "2023-04-01 06:00;200.000000");
         CHECK(spent[1] == "2023-04-01 12:00;50.000000");
-        CHECK(spent[2] == "2023-04-02 00:00;-50.000000");
     }
     {
         auto wallet = tm->getSubDailyWalletSeries(6 * 3600);
@@ -1712,11 +1760,10 @@ static void testSubDailySeries() {
     // 15m slots: 06:23 -> 06:15, 11:59 -> 11:45, 12:01 -> 12:00, 00:30 -> 00:30.
     {
         auto spent = tm->getSubDailySpentSeries(15 * 60);
-        CHECK(spent.size() == 4);
+        CHECK(spent.size() == 3);
         CHECK(spent[0] == "2023-04-01 06:15;100.000000");
         CHECK(spent[1] == "2023-04-01 11:45;100.000000");
         CHECK(spent[2] == "2023-04-01 12:00;50.000000");
-        CHECK(spent[3] == "2023-04-02 00:30;-50.000000");
     }
 
     // fromEpoch cut: earlier slots are NOT emitted, but they still fed the
@@ -1729,9 +1776,8 @@ static void testSubDailySeries() {
         cut.tm_hour = 12; cut.tm_min = 0; cut.tm_sec = 0;
         const long long from = timegm(&cut);
         auto spent = tm->getSubDailySpentSeries(6 * 3600, from);
-        CHECK(spent.size() == 2);
+        CHECK(spent.size() == 1);
         CHECK(spent[0] == "2023-04-01 12:00;50.000000");
-        CHECK(spent[1] == "2023-04-02 00:00;-50.000000");
         auto wallet = tm->getSubDailyWalletSeries(6 * 3600, from);
         CHECK(wallet.size() == 3);
         CHECK(wallet[0] == "BTC;2023-04-01 12:00;2.000000;0.000000"); // opening line
@@ -2275,7 +2321,8 @@ static void testCdcCryptoFixture() {
     const auto &w = tm->getWallets();
     CHECK(w.size() == 7);
     CHECK_NEAR(w.at("CRO").getBalance(), 768.41, 1e-9);
-    CHECK_NEAR(w.at("CRO").getMoneySpent(), 359.00, 1e-9);
+    // The CRO withdrawal's native (14.19) books on the outside wallet only.
+    CHECK_NEAR(w.at("CRO").getMoneySpent(), 344.81, 1e-9); // 359.00 - 14.19
     CHECK_NEAR(w.at("CRO").getBonusBalance(), 105.01, 1e-9);
     CHECK_NEAR(w.at("BTC").getBalance(), 0.0004, 1e-12);
     CHECK_NEAR(w.at("BTC").getMoneySpent(), 12.87, 1e-9);
@@ -2295,7 +2342,7 @@ static void testCdcCryptoFixture() {
             bonus += wc.second.getBonusBalance();
             bal += wc.second.getBalance();
         }
-    CHECK_NEAR(spent, 372.14738, 1e-9);
+    CHECK_NEAR(spent, 357.95738, 1e-9); // 372.14738 - 14.19 (withdrawal native)
     CHECK_NEAR(bonus, 105.0147, 1e-9);
     CHECK_NEAR(bal, 768.415, 1e-9);
     const auto &out = tm->getOutWallets();
