@@ -97,6 +97,37 @@ std::string formatDecimal(double v) {
     return std::string(buf);
 }
 
+bool parseTimestamp(const std::string &s, int &year, int &month, int &day,
+                    int &hour, int &minute, int &second) {
+    if (s.size() != 19 || s[4] != '-' || s[7] != '-' || s[10] != 'T' ||
+        s[13] != ':' || s[16] != ':')
+        return false;
+    int y, m, d;
+    if (!parseDate(s.substr(0, 10), y, m, d)) return false;
+    // The lambda result is a BOOL (not the value: "00" is a valid part).
+    auto part = [](const std::string &t, int &out) -> bool {
+        if (t[0] < '0' || t[0] > '9' || t[1] < '0' || t[1] > '9') return false;
+        out = (t[0] - '0') * 10 + (t[1] - '0');
+        return true;
+    };
+    if (!part(s.substr(11, 2), hour)) return false;
+    if (!part(s.substr(14, 2), minute)) return false;
+    if (!part(s.substr(17, 2), second)) return false;
+    if (hour > 23 || minute > 59 || second > 59) return false;
+    year = y;
+    month = m;
+    day = d;
+    return true;
+}
+
+std::string formatTimestamp(int year, int month, int day, int hour,
+                            int minute, int second) {
+    char buf[24];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02dT%02d:%02d:%02d", year, month,
+                  day, hour, minute, second);
+    return std::string(buf);
+}
+
 std::tm todayWallClock() {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
@@ -105,6 +136,32 @@ std::tm todayWallClock() {
 }
 
 } // namespace SheetSerde
+
+// ----------------------------------------------------------------------------
+// AssetCategory
+// ----------------------------------------------------------------------------
+
+const char *categoryToken(AssetCategory c) {
+    switch (c) {
+        case AssetCategory::RealEstate: return "REAL_ESTATE";
+        case AssetCategory::Vehicle: return "VEHICLE";
+        case AssetCategory::Art: return "ART";
+        case AssetCategory::Collectible: return "COLLECTIBLE";
+        case AssetCategory::Commodity: return "COMMODITY";
+        case AssetCategory::Other: return "OTHER";
+    }
+    return "OTHER";   // unreachable: the enum is closed
+}
+
+bool categoryFromToken(const std::string &token, AssetCategory &out) {
+    if (token == "REAL_ESTATE") { out = AssetCategory::RealEstate; return true; }
+    if (token == "VEHICLE") { out = AssetCategory::Vehicle; return true; }
+    if (token == "ART") { out = AssetCategory::Art; return true; }
+    if (token == "COLLECTIBLE") { out = AssetCategory::Collectible; return true; }
+    if (token == "COMMODITY") { out = AssetCategory::Commodity; return true; }
+    if (token == "OTHER") { out = AssetCategory::Other; return true; }
+    return false;   // unknown token: the serde rejects it
+}
 
 // ----------------------------------------------------------------------------
 // Liability
@@ -163,7 +220,37 @@ bool validLabel(const std::string &label) {
 
 } // namespace
 
-bool BalanceSheet::parseLine(const std::string &line, std::string &outId, Liability &out) {
+bool BalanceSheet::parseAssetLine(const std::string &line, std::string &outId,
+                                  Asset &out) {
+    const std::vector<std::string> f = SheetSerde::splitLine(line);
+    // Set form: kind + 6 fields (no trailer exists for assets).
+    if (f.size() != 7) return false;
+    if (f[0] != "A") return false;
+    outId = f[1];
+    if (!validId(outId)) return false;
+    const std::string &label = f[2];
+    if (!validLabel(label)) return false;
+    AssetCategory category;
+    if (!categoryFromToken(f[3], category)) return false;   // the serde IS the validator
+    double value = 0.0;
+    if (!SheetSerde::parseDecimal(f[4], value) || value < 0.0) return false;
+    int y, m, d, h, mi, s;
+    if (!SheetSerde::parseTimestamp(f[5], y, m, d, h, mi, s)) return false;
+    const std::string note = f[6] == "-" ? std::string() : f[6];
+    if (note.size() > kMaxLabelLength) return false;
+
+    out = Asset();
+    out.id = outId;
+    out.label = label;
+    out.category = category;
+    out.valueEur = value;
+    out.updated = f[5];   // the validated form, stored verbatim
+    out.note = std::move(note);
+    return true;
+}
+
+bool BalanceSheet::parseLiabilityLine(const std::string &line, std::string &outId,
+                                      Liability &out) {
     const std::vector<std::string> f = SheetSerde::splitLine(line);
     // Set form: kind + 7 fields; list form: + the "bal" marker + the value.
     if (f.size() != 8 && f.size() != 10) return false;
@@ -209,30 +296,61 @@ bool BalanceSheet::parseLine(const std::string &line, std::string &outId, Liabil
 }
 
 bool BalanceSheet::setLine(const std::string &line) {
-    std::string id;
-    Liability liability;
-    if (!parseLine(line, id, liability)) {
-        FileLog::w("BalanceSheet", "setLine rejected a line (shape/fields failed validation)");
-        return false;
+    const std::string kind = line.substr(0, line.find(';'));
+    if (kind == "L") {
+        std::string id;
+        Liability liability;
+        if (!parseLiabilityLine(line, id, liability)) {
+            FileLog::w("BalanceSheet", "setLine rejected a line (shape/fields failed validation)");
+            return false;
+        }
+        auto it = std::find_if(liabilities_.begin(), liabilities_.end(),
+                               [&](const Liability &l) { return l.id == id; });
+        if (it != liabilities_.end()) {
+            *it = std::move(liability);   // upsert: replace in place, keep the position
+        } else {
+            liabilities_.push_back(std::move(liability));
+        }
+        return true;
     }
-    auto it = std::find_if(liabilities_.begin(), liabilities_.end(),
-                           [&](const Liability &l) { return l.id == id; });
-    if (it != liabilities_.end()) {
-        *it = std::move(liability);   // upsert: replace in place, keep the position
-    } else {
-        liabilities_.push_back(std::move(liability));
+    if (kind == "A") {
+        std::string id;
+        Asset asset;
+        if (!parseAssetLine(line, id, asset)) {
+            FileLog::w("BalanceSheet", "setLine rejected an asset line (shape/fields failed validation)");
+            return false;
+        }
+        auto it = std::find_if(assets_.begin(), assets_.end(),
+                               [&](const Asset &a) { return a.id == id; });
+        if (it != assets_.end()) {
+            *it = std::move(asset);   // upsert: replace in place, keep the position
+        } else {
+            assets_.push_back(std::move(asset));
+        }
+        return true;
     }
-    return true;
+    FileLog::w("BalanceSheet", "setLine rejected a line (kind not activated)");
+    return false;
 }
 
 bool BalanceSheet::deleteEntry(const std::string &kindId) {
-    if (kindId.empty() || kindId[0] != 'L') return false;
+    if (kindId.empty()) return false;
     const std::string id = kindId.substr(1);
-    auto it = std::find_if(liabilities_.begin(), liabilities_.end(),
-                           [&](const Liability &l) { return l.id == id; });
-    if (it == liabilities_.end()) return false;
-    liabilities_.erase(it);
-    return true;
+    if (kindId[0] == 'L') {
+        auto it = std::find_if(liabilities_.begin(), liabilities_.end(),
+                               [&](const Liability &l) { return l.id == id; });
+        if (it == liabilities_.end()) return false;
+        liabilities_.erase(it);
+        return true;
+    }
+    if (kindId[0] == 'A') {
+        auto it = std::find_if(assets_.begin(), assets_.end(),
+                               [&](const Asset &a) { return a.id == id; });
+        if (it == assets_.end()) return false;
+        assets_.erase(it);
+        return true;
+    }
+    return false;
 }
 
 std::string BalanceSheet::liabilityLine(const Liability &l, const std::tm &asOf) {
@@ -268,11 +386,38 @@ std::string BalanceSheet::lineOf(const Liability &l) {
     return liabilityLine(l, SheetSerde::todayWallClock());
 }
 
+std::string BalanceSheet::assetLine(const Asset &a) {
+    std::string line = "A;";
+    line += a.id;
+    line += ';';
+    line += SheetSerde::escapeField(a.label);
+    line += ';';
+    line += categoryToken(a.category);
+    line += ';';
+    line += SheetSerde::formatDecimal(a.valueEur);
+    line += ';';
+    line += a.updated;
+    line += ';';
+    line += a.note.empty()
+                ? std::string("-")
+                : SheetSerde::escapeField(a.note);
+    return line;
+}
+
+std::string BalanceSheet::lineOf(const Asset &a) {
+    return assetLine(a);
+}
+
 std::vector<std::string> BalanceSheet::listLines(const std::string &kind, const std::tm &asOf) const {
     std::vector<std::string> lines;
-    if (kind != "L") return lines;   // other collections resolve empty until active
-    lines.reserve(liabilities_.size());
-    for (const auto &l: liabilities_) lines.push_back(lineOf(l, asOf));
+    if (kind == "L") {
+        lines.reserve(liabilities_.size());
+        for (const auto &l: liabilities_) lines.push_back(lineOf(l, asOf));
+    } else if (kind == "A") {
+        lines.reserve(assets_.size());
+        for (const auto &a: assets_) lines.push_back(assetLine(a));
+    }
+    // other collections resolve empty until active
     return lines;
 }
 
@@ -284,12 +429,17 @@ std::string BalanceSheet::serialize(const std::tm &asOf) const {
         if (!text.empty()) text += '\n';
         text += lineOf(l, asOf);
     }
+    for (const auto &a: assets_) {
+        if (!text.empty()) text += '\n';
+        text += assetLine(a);
+    }
     return text;
 }
 
 size_t BalanceSheet::parse(const std::string &text) {
     size_t rejected = 0;
-    std::vector<Liability> next;
+    std::vector<Liability> nextLiabilities;
+    std::vector<Asset> nextAssets;
     if (!text.empty()) {
         std::size_t start = 0;
         while (start <= text.size()) {
@@ -298,10 +448,27 @@ size_t BalanceSheet::parse(const std::string &text) {
                     start, nl == std::string::npos ? std::string::npos : nl - start);
             start = (nl == std::string::npos) ? text.size() + 1 : nl + 1;
             if (line.empty()) continue;
-            std::string id;
-            Liability liability;
-            if (parseLine(line, id, liability)) {
-                next.push_back(std::move(liability));
+            const std::string kind = line.substr(0, line.find(';'));
+            if (kind == "L") {
+                std::string id;
+                Liability liability;
+                if (parseLiabilityLine(line, id, liability)) {
+                    nextLiabilities.push_back(std::move(liability));
+                } else {
+                    ++rejected;
+                    FileLog::e("BalanceSheet",
+                               "Sheet section line rejected on load (skipped): " + line);
+                }
+            } else if (kind == "A") {
+                std::string id;
+                Asset asset;
+                if (parseAssetLine(line, id, asset)) {
+                    nextAssets.push_back(std::move(asset));
+                } else {
+                    ++rejected;
+                    FileLog::e("BalanceSheet",
+                               "Sheet section line rejected on load (skipped): " + line);
+                }
             } else {
                 ++rejected;
                 FileLog::e("BalanceSheet",
@@ -309,6 +476,13 @@ size_t BalanceSheet::parse(const std::string &text) {
             }
         }
     }
-    liabilities_ = std::move(next);
+    liabilities_ = std::move(nextLiabilities);
+    assets_ = std::move(nextAssets);
     return rejected;
+}
+
+double BalanceSheet::assetsTotal() const {
+    double total = 0.0;
+    for (const auto &a: assets_) total += a.valueEur;
+    return total;
 }

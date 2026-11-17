@@ -1,8 +1,8 @@
 // The user-owned balance-sheet state of the core (ruling: offline
 // functionality lives in the core). The sheet holds the collections the
-// user maintains by hand - liabilities in this build (assets and goals
-// join in later) - plus the core-owned line-serde that is ALSO the v5
-// save-section format: the on-disk section, the C-surface lines and the
+// user maintains by hand - liabilities and non-financial assets in this
+// build (goals join in later) - plus the core-owned line-serde that is
+// ALSO the v5 save-section format: the on-disk section, the C-surface lines and the
 // UI rows are the same text, so the app never re-implements the contract.
 //
 // The sheet is NOT import state: clearAll() (the import-state reset) must
@@ -16,6 +16,26 @@
 #include <ctime>
 #include <string>
 #include <vector>
+
+//! The user-declared category of a non-financial asset. The core is the
+//! vocabulary owner: the serde line carries one of the six tokens, the
+//! parser rejects anything else (the serde IS the validator), and the app
+//! picker hardcodes the same six tokens to build and pick - one list, no
+//! drift channel.
+enum class AssetCategory {
+    RealEstate,   //!< "REAL_ESTATE" - home, land, property
+    Vehicle,      //!< "VEHICLE" - car, motorcycle, boat, ...
+    Art,          //!< "ART" - paintings, sculpture, jewelry
+    Collectible,  //!< "COLLECTIBLE" - stamps, coins, cards, figurines
+    Commodity,    //!< "COMMODITY" - gold, silver, wine, timber
+    Other,        //!< "OTHER" - anything that fits no bucket above
+};
+
+//! The serde token of [c] ("REAL_ESTATE", ...).
+const char *categoryToken(AssetCategory c);
+
+//! Parse a serde category token (case-sensitive). false = unknown token.
+bool categoryFromToken(const std::string &token, AssetCategory &out);
 
 //! One user-maintained debt line (the liability collection). The current
 //! balance is core-computed (closed-form amortization) and never
@@ -59,12 +79,41 @@ struct Liability {
     double balanceAsOf(const std::tm &asOf) const;
 };
 
+//! One user-maintained non-financial asset entry (the asset collection).
+//! PURE STATIC value: no schedule math - the user re-declares the value
+//! when it changes and stamps [updated], the "honesty signal" of how
+//! fresh the declared value is (the core never recomputes it).
+struct Asset {
+    //! App-generated id (a UUID), the upsert/delete key. Same rules as
+    //! Liability::id.
+    std::string id;
+    //! Free user text (escaped as ';;' in the line format).
+    std::string label;
+    //! The declared category (one of the six tokens, core-validated).
+    AssetCategory category = AssetCategory::Other;
+    //! User-declared current value, EUR (>= 0).
+    double valueEur = 0.0;
+    //! Wall-clock "last updated" stamp, local time, the validated
+    //! "YYYY-MM-DDTHH:MM:SS" form (the serde stores it verbatim).
+    std::string updated;
+    //! Optional note (escaped; empty = none, "-" in the line).
+    std::string note;
+};
+
 class BalanceSheet {
 public:
-    //! The liability collection (the active collection of this build;
-    //! input order, which the line list keeps).
+    //! The liability collection (active; input order, which the line list
+    //! keeps).
     const std::vector<Liability> &getLiabilities() const { return liabilities_; }
     std::vector<Liability> &mutableLiabilities() { return liabilities_; }
+
+    //! The non-financial asset collection (active; input order).
+    const std::vector<Asset> &getAssets() const { return assets_; }
+    std::vector<Asset> &mutableAssets() { return assets_; }
+
+    //! The sum of the declared asset values (the non-financial part of
+    //! the later net-worth snapshot).
+    double assetsTotal() const;
 
     //!
     //! The line-serde (the house string-line contract, core-owned):
@@ -79,19 +128,29 @@ public:
     //!   numbers - decimal values >= 0 (finite), '-' for the optional
     //!             end date / payment
     //!   dates   - YYYY-MM-DD, a real calendar day (validated)
-    //! The KIND PREFIX selects the collection; this build activates "L".
-    //! setLine is a validator-fronted UPSERT BY id: a rejected line
-    //! (bad shape/text/number/date, or a kind this build does not
-    //! activate) leaves the sheet completely untouched and returns false.
+    //! The non-financial asset line (kind "A", also active in this
+    //! build; no trailer - nothing is core-computed for a static value):
+    //!   A;<id>;<label>;<category>;<valueEur>;<updatedISO>;<note|->
+    //!     category  - one of the six AssetCategory tokens (case-
+    //!                 sensitive; anything else is rejected)
+    //!     updatedISO- YYYY-MM-DDTHH:MM:SS, a real local wall-clock time
+    //!     note      - escaped text, max 512 chars, "-" for none
+    //! The KIND PREFIX selects the collection; this build activates
+    //! "L" and "A". setLine is a validator-fronted UPSERT BY id: a
+    //! rejected line (bad shape/text/number/date/category, or a kind this
+    //! build does not activate) leaves the sheet completely untouched and
+    //! returns false.
     bool setLine(const std::string &line);
 
     //! Delete the entry [kindId] = kind prefix + id (as entered in the
-    //! line, e.g. "L<uuid>"). false when the kind or the entry is unknown.
+    //! line, e.g. "L<uuid>" or "A<uuid>"). false when the kind or the
+    //! entry is unknown.
     bool deleteEntry(const std::string &kindId);
 
-    //! The current entry lines of [kind] (kind "L" now; other kinds
+    //! The current entry lines of [kind] ("L" and "A" now; other kinds
     //! resolve to the empty list until their phase activates them), in
-    //! stored order, the trailing ;bal; value computed at [asOf].
+    //! stored order, the trailing ;bal; value computed at [asOf] (assets
+    //! carry no trailer).
     std::vector<std::string> listLines(const std::string &kind, const std::tm &asOf) const;
 
     //! The full save-section text: every collection, one line per entry,
@@ -111,15 +170,26 @@ public:
     //! Serialize one entry WITHOUT the balance trailer (the set form).
     static std::string lineOf(const Liability &l);
 
+    //! The line of one asset (no trailer possible - nothing is
+    //! core-computed).
+    static std::string lineOf(const Asset &a);
+
 private:
     //! The current liability as a line (the public single-entry form).
     static std::string liabilityLine(const Liability &l, const std::tm &asOf);
-    //! Parse + validate one entry (the single source of truth; shared by
-    //! setLine and parse). false on a bad line, out untouched semantics.
-    static bool parseLine(const std::string &line, std::string &outId,
-                          Liability &out);
+    //! The current asset as a line (the single-entry form).
+    static std::string assetLine(const Asset &a);
+    //! Parse + validate one liability (the single source of truth; shared
+    //! by setLine and parse). false on a bad line, out untouched
+    //! semantics.
+    static bool parseLiabilityLine(const std::string &line, std::string &outId,
+                                   Liability &out);
+    //! Parse + validate one asset (same contract for the "A" kind).
+    static bool parseAssetLine(const std::string &line, std::string &outId,
+                               Asset &out);
 
     std::vector<Liability> liabilities_;
+    std::vector<Asset> assets_;
 };
 
 // The line-format text helpers (the single escape rule, both directions).
@@ -145,6 +215,15 @@ std::string formatDate(int year, int month, int day);
 //! exact for any user-entered money/rate value, re-parses to the same
 //! double).
 std::string formatDecimal(double v);
+
+//! Strict wall-clock timestamp parse (YYYY-MM-DDTHH:MM:SS, a real
+//! calendar day and clock time - the asset "updated" field).
+bool parseTimestamp(const std::string &s, int &year, int &month, int &day,
+                    int &hour, int &minute, int &second);
+
+//! Format the inverse of parseTimestamp.
+std::string formatTimestamp(int year, int month, int day, int hour,
+                            int minute, int second);
 
 //! Today as a wall-clock tm (the asOf the callers pass for "now").
 std::tm todayWallClock();

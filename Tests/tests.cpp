@@ -1228,6 +1228,89 @@ static void testBalanceSheet() {
         CHECK_NEAR(f.balanceAsOf(tmOf(2026, 1, 1)), 321.0, 1e-9);
     }
 
+    SECTION("assets: serde round trip, sum, category validation");
+    {
+        BalanceSheet sheet;
+        // A ';' in the label + a ';' in the note - the single escape rule.
+        const std::string artLine =
+                "A;a-1;Art ;;carrying case;ART;12000;2026-11-01T09:30:00;The ;;frame;; is original";
+        const std::string houseLine = "A;a-2;House;REAL_ESTATE;350000;2025-06-15T14:05:09;-";
+        CHECK(sheet.setLine(artLine));
+        CHECK(sheet.setLine(houseLine));
+        CHECK(sheet.getAssets().size() == 2);
+        CHECK(sheet.getAssets()[0].label == "Art ;carrying case");
+        CHECK(sheet.getAssets()[0].note == "The ;frame; is original");
+        CHECK(sheet.assetsTotal() == 362000.0);
+
+        // listLines("A") = the stored lines (no trailer - nothing is
+        // core-computed for a static value).
+        std::tm asof{};
+        asof.tm_year = 2026 - 1900;
+        asof.tm_mon = 0;
+        asof.tm_mday = 15;
+        const std::vector<std::string> lines = sheet.listLines("A", asof);
+        CHECK(lines.size() == 2);
+        CHECK(lines[0] == artLine);
+        CHECK(lines[1] == houseLine);
+        // Re-setting a listed line = an idempotent upsert.
+        CHECK(sheet.setLine(lines[1]));
+        CHECK(sheet.getAssets().size() == 2);
+
+        // Upsert in place: the id keeps its position, the value (and the
+        // sum) moves, the user stamp carries through.
+        CHECK(sheet.setLine("A;a-2;House (sale pending);REAL_ESTATE;375000;2026-11-17T18:00:00;-"));
+        CHECK(sheet.getAssets().size() == 2);
+        CHECK(sheet.getAssets()[1].id == "a-2");
+        CHECK(sheet.getAssets()[1].valueEur == 375000.0);
+        CHECK(sheet.getAssets()[1].updated == "2026-11-17T18:00:00");
+        CHECK(sheet.assetsTotal() == 387000.0);
+
+        // Every one of the six tokens parses to its enum and emits back
+        // the same token (the core is the vocabulary owner).
+        CHECK(sheet.setLine("A;a-3;Bike;VEHICLE;5000;2020-01-01T12:00:00;-"));
+        CHECK(sheet.setLine("A;a-4;Stamps;COLLECTIBLE;100;2020-01-01T12:00:00;-"));
+        CHECK(sheet.setLine("A;a-5;Gold bars;COMMODITY;10;2020-01-01T12:00:00;-"));
+        CHECK(sheet.setLine("A;a-6;Misc;OTHER;0;2020-01-01T12:00:00;-"));
+        CHECK(sheet.getAssets().size() == 6);
+        const char *tokens[] = {"ART", "REAL_ESTATE", "VEHICLE", "COLLECTIBLE", "COMMODITY", "OTHER"};
+        for (size_t i = 0; i < sizeof(tokens) / sizeof(tokens[0]); ++i) {
+            CHECK(std::string(categoryToken(sheet.getAssets()[i].category)) == tokens[i]);
+        }
+        CHECK(sheet.assetsTotal() == 392110.0);
+
+        // Validation: bad categories and shapes are rejected, the sheet
+        // stays untouched (the serde IS the validator).
+        CHECK(!sheet.setLine("A;a-9;X;GOLD;100;2026-01-01T00:00:00;-"));         // unknown category
+        CHECK(!sheet.setLine("A;a-9;X;real_estate;100;2026-01-01T00:00:00;-"));   // case-sensitive
+        CHECK(!sheet.setLine("A;a-9;X;;100;2026-01-01T00:00:00;-"));              // empty category
+        CHECK(!sheet.setLine("A;a-9;X;ART;100;2026-01-01T00:00:00;-;"));          // 8 fields
+        CHECK(!sheet.setLine("A;a-9;X;ART;-50;2026-01-01T00:00:00;-"));           // negative value
+        CHECK(!sheet.setLine("A;a-9;X;ART;100;2026-02-30T00:00:00;-"));           // no such day
+        CHECK(!sheet.setLine("A;a-9;X;ART;100;2026-01-01T25:00:00;-"));           // hour 25
+        CHECK(!sheet.setLine("A;a-9;X;ART;100;2026-01-01T00:00;-"));              // short timestamp
+        CHECK(sheet.getAssets().size() == 6);
+
+        // Mixed-collection section round trip: L and A lines in one text,
+        // dispatched by kind, byte-stable (the section is generic).
+        BalanceSheet mixed;
+        CHECK(mixed.setLine("L;l-1;Loan;1000;2;2020-01-01;2030-01-01;25"));
+        CHECK(mixed.setLine(artLine));
+        const std::string section = mixed.serialize(asof);
+        BalanceSheet back;
+        CHECK(back.parse(section) == 0);
+        CHECK(back.getLiabilities().size() == 1);
+        CHECK(back.getAssets().size() == 1);
+        CHECK(back.assetsTotal() == 12000.0);
+        CHECK(back.serialize(asof) == section);
+
+        // Delete is kind-scoped (the app passes "A" + the id).
+        CHECK(!sheet.deleteEntry("La-1"));   // the L collection: no such entry
+        CHECK(sheet.deleteEntry("Aa-1"));
+        CHECK(sheet.getAssets().size() == 5);
+        CHECK(!sheet.deleteEntry("Aa-1"));   // already gone
+        CHECK(sheet.assetsTotal() == 380110.0);
+    }
+
     SECTION("v5 storage: sheet round trip, v3/v4 upgrade, clearAll preservation");
     const std::string dir =
             (std::filesystem::temp_directory_path() / "nf_tx_core_tests_sheet").string() + "/";
@@ -1240,6 +1323,9 @@ static void testBalanceSheet() {
         BalanceSheet sheet;
         CHECK(sheet.setLine("L;a1;Mort;;gage;150000;3.575;2019-02-01;2049-02-01;899.99"));
         CHECK(sheet.setLine("L;a2;Car;20000;4.9;2024-05-01;-;-"));
+        // The section is generic over the collections: an asset line
+        // rides the same text byte-exact through the save file.
+        CHECK(sheet.setLine("A;as-1;House;REAL_ESTATE;350000;2026-11-15T10:00:00;-"));
         std::tm asof{};
         asof.tm_year = 2026 - 1900;
         asof.tm_mon = 0;
@@ -1278,6 +1364,8 @@ static void testBalanceSheet() {
         CHECK(loaded.parse(tm2.getBalanceSheetText()) == 0);
         CHECK(loaded.getLiabilities().size() == 2);
         CHECK(loaded.getLiabilities()[0].label == "Mort;gage");
+        CHECK(loaded.getAssets().size() == 1);
+        CHECK(loaded.getAssets()[0].valueEur == 350000.0);
         CHECK(loaded.serialize(asof) == text);
     }
 
