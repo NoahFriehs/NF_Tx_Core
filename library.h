@@ -169,6 +169,25 @@ std::vector<std::string> getTransactionsAsStrings();
 //! \brief Returns the card transaction formatted in XML.
 std::vector<std::string> getCardTransactionsAsStrings();
 
+//! \brief Upserts one entry of the user-owned balance sheet from its
+//! serde line (see BalanceSheet.h for the line contract: kind prefix +
+//! ;-separated fields, the balance is core-computed and never taken from
+//! the line). The core triggers its own save afterwards (atomic) when a
+//! save dir is known, so the entry survives the next cold start.
+//! false = line rejected (the sheet stays untouched) or no live core.
+bool sheetSet(const std::string &line);
+
+//! \brief Deletes the balance-sheet entry [kindId] (kind prefix + id,
+//! e.g. "L<uuid>"); the core then auto-saves like sheetSet.
+//! false = unknown entry or no live core.
+bool sheetDelete(const std::string &kindId);
+
+//! \brief The current balance-sheet entries of [kind] ("L") as lines, in
+//! stored order; each line carries the core-computed current balance in
+//! its trailing ;bal;<value> field. Empty for inactive kinds or no live
+//! core.
+std::vector<std::string> sheetList(const std::string &kind);
+
 }
 
 #endif //NF_TX_CORE_LIBRARY_H

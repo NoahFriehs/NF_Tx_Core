@@ -1,4 +1,4 @@
-// Native binary persistence (format v4; v2/v3 readable legacy).
+// Native binary persistence (format v5; v2/v3/v4 readable legacy).
 //
 // The portable layout (v3/v4) is an explicit byte layout:
 //   * all integers   : fixed width, little-endian
@@ -14,21 +14,27 @@
 // carries no ABI data, so the format is portable between architectures,
 // compilers and endiannesses.
 //
-// Version history (the reader accepts 2, 3 and 4; writes are always v4):
+// Version history (the reader accepts 2 to 5; writes are always v5):
 //   v2 - raw memory dumps of fixed-size C structs. Reading requires the
 //        writing machine's long double ABI (checked via the v2 header);
 //        a v2 file from another ABI is rejected.
 //   v3 - the first portable layout; the transaction record carries ONE
 //        flag byte (isOutsideTransaction). This is the layout the
 //        pre-Curve device builds wrote, so it must keep reading.
-//   v4 - current: the transaction record gained the excludedFromTotals
-//        flag byte after isOutsideTransaction. The bump exists because
-//        the change sits MID-RECORD: under a shared version number an
-//        old v3 file would not be distinguishable and its strings would
-//        misparse instead of the layout being selected by version.
+//   v4 - the transaction record gained the excludedFromTotals flag byte
+//        after isOutsideTransaction. The bump exists because the change
+//        sits MID-RECORD: under a shared version number an old v3 file
+//        would not be distinguishable and its strings would misparse
+//        instead of the layout being selected by version.
+//   v5 - current: the STATE file gained one ADDITIVE section at the end -
+//        the user-owned balance-sheet text (the core-serialized sheet,
+//        all collections in one line-based section). The transaction and
+//        wallet layout are UNCHANGED from v4. Legacy v3/v4 state files
+//        read with an empty sheet (the in-memory upgrade), written as v5
+//        on the next store.
 //
-// Legacy v2/v3 files are READ (so user data survives an app update) and
-// re-saved in v4 on the next store. A wallet store that fails MID-RECORD
+// Legacy v2/v3/v4 files are READ (so user data survives an app update) and
+// re-saved in v5 on the next store. A wallet store that fails MID-RECORD
 // reads as UNREADABLE (0 + an error log; the loader treats the store as
 // absent) - never as a silent half-state. The app's guarded re-import is
 // the recovery (Room fallback + the fast-start re-parse).
@@ -59,15 +65,20 @@ inline constexpr uint8_t kVersionV2 = 2;
 // First portable layout: ONE flag byte in the transaction record.
 // Read-only legacy (see the header version history).
 inline constexpr uint8_t kVersionV3 = 3;
-// Current layout: + the excludedFromTotals flag byte in the record.
+// + the excludedFromTotals flag byte in the record. Read-only legacy.
 inline constexpr uint8_t kVersionV4 = 4;
+// Current: + the user-owned balance-sheet section in the state file (the
+// transaction/wallet layout unchanged from v4).
+inline constexpr uint8_t kVersionV5 = 5;
 
 // The transaction record layout of a readable file version (v2 is
 // converted struct-by-struct and never reaches the record reader).
 enum class TxRecordLayout { V3, V4 };
 
+// The v4 and v5 records are byte-identical (v5 only touches the STATE
+// file), so both ride the V4 record layout.
 inline TxRecordLayout txLayoutOf(int version) {
-    return version == kVersionV4 ? TxRecordLayout::V4 : TxRecordLayout::V3;
+    return version >= kVersionV4 ? TxRecordLayout::V4 : TxRecordLayout::V3;
 }
 
 // ---------------------------------------------------------------------------
@@ -138,7 +149,7 @@ public:
     bool ok() const { return ok_; }
     size_t remaining() const { return pos_ <= size_ ? size_ - pos_ : 0; }
 
-    // Read the CWCP header. Returns the version (2, 3 or 4) or 0, and on
+    // Read the CWCP header. Returns the version (2 to 5) or 0, and on
     // success leaves the stream positioned right after the header. For
     // v2 the long double ABI of the writing machine is validated here.
     int peekVersion() {
@@ -150,7 +161,7 @@ public:
         }
         uint8_t version = 0;
         if (!raw(&version, 1)) return 0;
-        if (version > kVersionV4) {
+        if (version > kVersionV5) {
             FileLog::w("BinaryUtil", "Unsupported version " + std::to_string(version));
             return 0;
         }
@@ -467,7 +478,7 @@ inline bool writeFileCurrent(const std::string &path, const std::function<bool(W
             return false;
         }
         f.write(kMagic, 4);
-        const char v = static_cast<char>(kVersionV4);
+        const char v = static_cast<char>(kVersionV5);
         f.write(&v, 1);
         Writer w(f);
         if (!emit(w) || !w.ok()) {
@@ -499,6 +510,10 @@ inline bool writeWalletStore(const std::string &path, const std::vector<WalletSt
 }
 
 inline bool writeStateFile(const std::string &path, const TransactionManagerState &st) {
+    // The v5 state file appends ONE additive tail section (v3/v4 layout +
+    // the user-owned balance-sheet text): the section rides the version
+    // byte, so a pre-v5 reader never sees it and a v5 reader can only
+    // meet it in a v5 file - same mechanism as the v4 record flag.
     return writeFileCurrent(path, [&st](Writer &w) {
         w.u8(static_cast<uint8_t>((st.hasTxData ? 1 : 0) | (st.hasCardTxData ? 2 : 0) |
                                          (st.isReadyFlag ? 4 : 0)));
@@ -508,6 +523,7 @@ inline bool writeStateFile(const std::string &path, const TransactionManagerStat
         for (const auto &currency: st.currencies) w.string(currency);
         w.count(st.cardTxTypes.size());
         for (const auto &type: st.cardTxTypes) w.string(type);
+        w.string(st.balanceSheetText);
         return w.ok();
     });
 }
@@ -617,10 +633,10 @@ inline WalletStruct convertWallet(const V2::Wallet &v) {
 } // namespace V2
 
 // ---------------------------------------------------------------------------
-// File readers (v2, v3, or v4 auto-detect)
+// File readers (v2 to v5 auto-detect)
 // ---------------------------------------------------------------------------
 
-// Returns the version that was read (2/3/4) or 0 (missing/invalid, or a
+// Returns the version that was read (2 to 5) or 0 (missing/invalid, or a
 // MID-RECORD failure -> out empty).
 inline int readWalletStore(const std::string &path, std::vector<WalletStruct> &out) {
     out.clear();
@@ -681,14 +697,16 @@ inline int readWalletStore(const std::string &path, std::vector<WalletStruct> &o
     return version;
 }
 
-// Returns the version that was read (2/3/4) or 0 (out left default).
+// Returns the version that was read (2 to 5) or 0 (out left default).
 inline int readStateFile(const std::string &path, TransactionManagerState &st) {
     Reader r;
     if (!r.open(path)) return 0;
     const int version = r.peekVersion();
     if (version == 0) return 0;
-    // The state file layout is identical for v3 and v4 (only the
-    // transaction RECORD differs between the two versions).
+    // The state file layout is identical for v3, v4 and v5 up to the card
+    // type list; ONLY v5 carries the balance-sheet section at the tail
+    // (v3/v4 read it as the empty default - the in-memory upgrade).
+    st.balanceSheetText.clear();
     if (version >= kVersionV3) {
         uint8_t flags = 0;
         if (!r.u8(flags)) return 0;
@@ -710,6 +728,14 @@ inline int readStateFile(const std::string &path, TransactionManagerState &st) {
             std::string s;
             if (!r.string(s)) break;
             st.cardTxTypes.push_back(std::move(s));
+        }
+        if (version == kVersionV5) {
+            // The additive v5 section (the user-owned sheet text). A
+            // short file here is the store's usual corrupt verdict: out
+            // left default via the return-0 path below.
+            std::string sheetText;
+            if (!r.string(sheetText)) return 0;
+            st.balanceSheetText = std::move(sheetText);
         }
     } else {
         V2::State v;

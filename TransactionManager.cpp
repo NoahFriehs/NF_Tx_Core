@@ -1119,6 +1119,7 @@ Wallet *TransactionManager::getWallet(int walletId) {
 bool TransactionManager::saveData(const std::string &dirPath) {
     std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Saving data to dir: " + dirPath);
+    saveDir_ = dirPath;   // the sheet auto-save target of later mutations
 
     std::vector<WalletStruct> walletStructVector;
     for (auto &[name, wallet]: wallets) {
@@ -1153,7 +1154,9 @@ bool TransactionManager::saveData(const std::string &dirPath) {
         return false;
     }
     if (upgradedLegacy_) {
-        FileLog::i("TransactionManager", "Legacy save files (v2/v3) upgraded to format v4");
+        FileLog::i("TransactionManager",
+                   "Legacy save files upgraded to format v" +
+                           std::to_string(BinaryUtil::kVersionV5));
         upgradedLegacy_ = false;
     }
     FileLog::i("TransactionManager", "Finished saving data");
@@ -1163,7 +1166,8 @@ bool TransactionManager::saveData(const std::string &dirPath) {
 void TransactionManager::loadData(const std::string &dirPath) {
     std::lock_guard<std::mutex> lock(mutex);
     FileLog::i("TransactionManager", "Loading data from dir: " + dirPath);
-    clearAll();
+    saveDir_ = dirPath;   // a loaded store becomes the auto-save target
+    clearAll();           // resets import state; the sheet transport survives it
     upgradedLegacy_ = false;
 
     std::vector<WalletStruct> walletStructVector;
@@ -1195,9 +1199,9 @@ void TransactionManager::loadData(const std::string &dirPath) {
         return;
     }
 
-    upgradedLegacy_ = stateVersion < BinaryUtil::kVersionV4 ||
-                      walletVersion < BinaryUtil::kVersionV4 ||
-                      cardVersion < BinaryUtil::kVersionV4;
+    upgradedLegacy_ = stateVersion < BinaryUtil::kVersionV5 ||
+                      walletVersion < BinaryUtil::kVersionV5 ||
+                      cardVersion < BinaryUtil::kVersionV5;
 
     setTransactionManagerState(state);
 
@@ -1242,7 +1246,23 @@ TransactionManagerState TransactionManager::getTransactionManagerState() {
     state.walletIdCounter = Wallet::getWalletIdCounter();
     state.currencies = currencies;
     state.cardTxTypes = cardTxTypes;
+    state.balanceSheetText = balanceSheetText_;
     return state;
+}
+
+void TransactionManager::setBalanceSheetText(const std::string &text) {
+    std::lock_guard<std::mutex> lock(mutex);
+    balanceSheetText_ = text;
+}
+
+std::string TransactionManager::getBalanceSheetText() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return balanceSheetText_;
+}
+
+std::string TransactionManager::getSaveDir() const {
+    std::lock_guard<std::mutex> lock(mutex);
+    return saveDir_;
 }
 
 void TransactionManager::setTransactionManagerState(const TransactionManagerState &state) {
@@ -1253,6 +1273,7 @@ void TransactionManager::setTransactionManagerState(const TransactionManagerStat
     isReadyFlag = state.isReadyFlag;
     currencies = state.currencies;
     cardTxTypes = state.cardTxTypes;
+    balanceSheetText_ = state.balanceSheetText;
 }
 
 bool TransactionManager::checkSavedData(const std::string &dirPath) {
@@ -1270,6 +1291,9 @@ bool TransactionManager::checkIfFileExists(const std::string &file) {
 
 void TransactionManager::clearAll() {
     FileLog::i("TransactionManager", "Clearing all data");
+    // Deliberately NOT touched here: balanceSheetText_ (the user-owned
+    // sheet - the restore sequence runs through this reset and must not
+    // wipe it) and saveDir_ (the auto-save target of the live store).
     hasTxData = false;
     hasCardTxData = false;
 

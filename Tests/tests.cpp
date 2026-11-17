@@ -21,6 +21,7 @@
 #include <thread>
 #include <vector>
 
+#include "../BalanceSheet.h"
 #include "../BinaryUtil.h"
 #include "../FileLog.h"
 #include "../library.h"
@@ -572,7 +573,7 @@ static void testTxIdCounterRoundTrip() {
 }
 
 static void testBinaryUtil() {
-    SECTION("binary format (v4): portable layout, explicit little-endian");
+    SECTION("binary format (v5): portable layout, explicit little-endian");
     const std::string dir =
             (std::filesystem::temp_directory_path() / "nf_tx_core_tests_bin").string() + "/";
     std::filesystem::remove_all(dir);
@@ -590,18 +591,22 @@ static void testBinaryUtil() {
                          "ETH",
                          std::string(150, 'a') /* > legacy limit */};
         st.cardTxTypes = {"buy", "sell"};
+        // The additive v5 section: the user-owned sheet text rides the
+        // v5 state file and round-trips byte-exact.
+        st.balanceSheetText = "L;id1;Home\u00a6loan;150000;3.575;2019-02-01;-;-";
         CHECK(BinaryUtil::writeStateFile(dir + "state", st));
         TransactionManagerState in;
         in.txIdCounter = -1;
-        CHECK(BinaryUtil::readStateFile(dir + "state", in) == BinaryUtil::kVersionV4);
+        CHECK(BinaryUtil::readStateFile(dir + "state", in) == BinaryUtil::kVersionV5);
         CHECK(in.hasTxData && in.hasCardTxData && in.isReadyFlag);
         CHECK(in.txIdCounter == 424242);
         CHECK(in.walletIdCounter == 7);
         CHECK(in.currencies == st.currencies);
         CHECK(in.cardTxTypes == st.cardTxTypes);
+        CHECK(in.balanceSheetText == st.balanceSheetText);
     }
 
-    // explicit byte layout: CWCP, version 4, little-endian
+    // explicit byte layout: CWCP, version 5, little-endian
     {
         TransactionManagerState st;
         st.txIdCounter = 3;
@@ -611,7 +616,7 @@ static void testBinaryUtil() {
         f.read(b, sizeof b);
         CHECK(f.gcount() == static_cast<std::streamsize>(sizeof b));
         CHECK(std::memcmp(b, "CWCP", 4) == 0);
-        CHECK(b[4] == BinaryUtil::kVersionV4);
+        CHECK(b[4] == BinaryUtil::kVersionV5);
         CHECK(static_cast<unsigned char>(b[5]) == 0);   // flags
         int32_t txCounter = 0, walletCounter = 0;
         std::memcpy(&txCounter, b + 6, 4);
@@ -625,7 +630,7 @@ static void testBinaryUtil() {
         CHECK(BinaryUtil::writeWalletStore(dir + "empty", {}));
         CHECK(std::filesystem::file_size(dir + "empty") == 5 + 4);
         std::vector<WalletStruct> in;
-        CHECK(BinaryUtil::readWalletStore(dir + "empty", in) == BinaryUtil::kVersionV4);
+        CHECK(BinaryUtil::readWalletStore(dir + "empty", in) == BinaryUtil::kVersionV5);
         CHECK(in.empty());
     }
 
@@ -736,7 +741,7 @@ static void testUnlimitedPersistence() {
     CHECK(BinaryUtil::writeWalletStore(dir + "big", in));
 
     std::vector<WalletStruct> out;
-    CHECK(BinaryUtil::readWalletStore(dir + "big", out) == BinaryUtil::kVersionV4);
+    CHECK(BinaryUtil::readWalletStore(dir + "big", out) == BinaryUtil::kVersionV5);
     CHECK(out.size() == nWallets);
     CHECK(out[0].transactions.size() == nTxsPerWallet);
     CHECK(out[149].walletId == 149);
@@ -881,13 +886,13 @@ static void testLegacyV2Migration() {
 
     tm.saveData(dir);
 
-    // the files are now v4
+    // the files are now v5
     for (const char *name: {"wallets", "state", "cardWallets"}) {
         std::ifstream f(dir + name, std::ios::binary);
         char hb[5] = {};
         f.read(hb, 5);
         CHECK(std::memcmp(hb, "CWCP", 4) == 0);
-        CHECK(hb[4] == BinaryUtil::kVersionV4);
+        CHECK(hb[4] == BinaryUtil::kVersionV5);
     }
 
     TransactionManager loaded;
@@ -1036,14 +1041,15 @@ static void testSaveFormatV3LegacyRead() {
         CHECK(d.transactionDate.tm_mday == 1);
     }
 
-    // ...re-save -> CURRENT format (v4) on every file...
+    // ...re-save -> CURRENT format (v5, incl. the sheet section) on every
+    // file...
     CHECK(tm.saveData(dir));
     for (const char *name: {"wallets", "state", "cardWallets"}) {
         std::ifstream f(dir + name, std::ios::binary);
         char hb[5] = {};
         f.read(hb, 5);
         CHECK(std::memcmp(hb, "CWCP", 4) == 0);
-        CHECK(hb[4] == BinaryUtil::kVersionV4);
+        CHECK(hb[4] == BinaryUtil::kVersionV5);
     }
 
     // ...and the v4 round trip keeps the row (flag still false).
@@ -1085,6 +1091,338 @@ static void testSaveFormatV3LegacyRead() {
         CHECK(!st.hasTxData);
         CHECK(tm2.getWallets().empty());
         CHECK(tm2.getTransactions().empty());
+    }
+    std::filesystem::remove_all(dir);
+}
+
+// The user-owned balance sheet (liabilities): the line serde (the single
+// escape rule, upsert/delete, validation), the closed-form amortization
+// math (hand-computed fixtures), the v5 storage (round trip, the v3/v4
+// upgrade-on-save, clearAll preservation) and the load-bearing state
+// semantics on the C surface (the init/restore sequence must not wipe
+// the sheet).
+static void testBalanceSheet() {
+    SECTION("serde: escape round trip, upsert, delete, validation");
+    {
+        BalanceSheet sheet;
+        // The ';;' inside the label is the single escape-rule case (the
+        // unescaped label is "Mort;gage").
+        const std::string line = "L;uuid-1;Mort;;gage;150000;3.575;2019-02-01;2049-02-01;899.99";
+        CHECK(sheet.setLine(line));
+        std::tm asof{};
+        asof.tm_year = 2026 - 1900;
+        asof.tm_mon = 0;
+        asof.tm_mday = 15;
+        auto lines = sheet.listLines("L", asof);
+        CHECK(lines.size() == 1);
+        // The unescaped label survives the escape round trip inside the line.
+        const std::vector<std::string> f = SheetSerde::splitLine(lines[0]);
+        CHECK(f.size() == 10);   // 8 fields + "bal" + the balance value
+        CHECK(f[2] == "Mort;gage");
+        CHECK(f[8] == "bal");
+        // The list form round-trips through set as-is (the trailer is
+        // recomputed, so the set is an upsert, not an add).
+        CHECK(sheet.setLine(lines[0]));
+        CHECK(sheet.getLiabilities().size() == 1);
+
+        // Upsert by id: same id, new label -> replaced in place.
+        CHECK(sheet.setLine("L;uuid-1;Renovated;150000;3.575;2019-02-01;-;-") );
+        CHECK(sheet.getLiabilities().size() == 1);
+        CHECK(sheet.getLiabilities()[0].label == "Renovated");
+        CHECK(!sheet.getLiabilities()[0].hasEndDate);
+        CHECK(sheet.getLiabilities()[0].monthlyPaymentEur == 0.0);
+
+        // A second, distinct entry keeps its stored position.
+        CHECK(sheet.setLine("L;uuid-2;Car loan;20000;4.9;2024-05-01;-;-"));
+        CHECK(sheet.getLiabilities().size() == 2);
+        CHECK(sheet.getLiabilities()[1].id == "uuid-2");
+
+        // Delete: the second entry goes, the first stays.
+        CHECK(sheet.deleteEntry("Luuid-2"));
+        CHECK(sheet.getLiabilities().size() == 1);
+        CHECK(!sheet.deleteEntry("Luuid-2"));   // already gone
+        CHECK(!sheet.deleteEntry("Xuuid-1"));   // unknown kind
+
+        // Validation: every rejection leaves the sheet untouched (size 1).
+        CHECK(!sheet.setLine("L;u3;X;100;1;2020-01-01;-;-;"));       // 9 fields
+        CHECK(!sheet.setLine("L;u3;X;100;1;2020-01-01;-;"));          // trailing empty field
+        CHECK(!sheet.setLine("A;u3;X;100;1;2020-01-01;-;-"));         // kind not active
+        CHECK(!sheet.setLine("L;u3;X;abc;1;2020-01-01;-;-"));         // rate: not a number
+        CHECK(!sheet.setLine("L;u3;X;100;1;2024-02-30;-;-"));         // no such day
+        CHECK(!sheet.setLine("L;u3;X;100;1;2020-13-01;-;-"));         // month 13
+        CHECK(!sheet.setLine("L;u3;X;100;1;2020-01-01;2019-01-01;-"));  // end before start
+        CHECK(!sheet.setLine("L;u3;X;-100;1;2020-01-01;-;-"));        // negative principal
+        CHECK(!sheet.setLine("L;u3;X;100;1;2020-01-01;-;1.5e"));      // broken decimal
+        CHECK(!sheet.setLine("L;;X;100;1;2020-01-01;-;-"));           // empty id
+        CHECK(!sheet.setLine("L;u3;X;100;1;2020-01-01;-;nan"));       // not finite
+        CHECK(sheet.getLiabilities().size() == 1);
+        CHECK(sheet.getLiabilities()[0].id == "uuid-1");
+
+        // serialize/parse round trip (the v5 section text).
+        BalanceSheet other;
+        const std::string text = sheet.serialize(asof);
+        CHECK(other.parse(text) == 0);
+        CHECK(other.getLiabilities().size() == 1);
+        CHECK(other.getLiabilities()[0].label == "Renovated");
+        CHECK(other.serialize(asof) == text);
+    }
+
+    SECTION("balance math: hand-computed amortization fixtures");
+    {
+        auto tmOf = [](int year, int month, int day) {
+            std::tm t{};
+            t.tm_year = year - 1900;
+            t.tm_mon = month - 1;
+            t.tm_mday = day;
+            return t;
+        };
+        // A: standard annuity - P=100000, 4.8%/year (i=0.004), M=600,
+        // 36 whole months: 100000*1.004^36 - 600*(1.004^36-1)/0.004.
+        Liability a;
+        a.principalEur = 100000.0;
+        a.annualRatePct = 4.8;
+        a.startYear = 2020; a.startMonth = 1; a.startDay = 1;
+        a.monthlyPaymentEur = 600.0;
+        CHECK_NEAR(a.balanceAsOf(tmOf(2023, 1, 1)), 92272.378308, 1e-3);
+        // B: zero rate - P=12000, M=500, 8 months: 12000 - 8*500.
+        Liability b;
+        b.principalEur = 12000.0;
+        b.startYear = 2026; b.startMonth = 1; b.startDay = 1;
+        b.monthlyPaymentEur = 500.0;
+        CHECK_NEAR(b.balanceAsOf(tmOf(2026, 9, 15)), 8000.0, 1e-9);
+        // C: the payoff cap - an overpay settles at 0, never negative.
+        Liability c;
+        c.principalEur = 1000.0;
+        c.startYear = 2026; c.startMonth = 1; c.startDay = 1;
+        c.monthlyPaymentEur = 10000.0;
+        CHECK_NEAR(c.balanceAsOf(tmOf(2026, 2, 1)), 0.0, 1e-9);
+        // D: the end date - 1000, 12%/year (i=0.01), M=80, ending after
+        // 11 months: full annuity value AT the end month, 0 past it.
+        Liability d;
+        d.principalEur = 1000.0;
+        d.annualRatePct = 12.0;
+        d.startYear = 2020; d.startMonth = 1; d.startDay = 1;
+        d.hasEndDate = true;
+        d.endYear = 2020; d.endMonth = 12; d.endDay = 1;
+        d.monthlyPaymentEur = 80.0;
+        CHECK_NEAR(d.balanceAsOf(tmOf(2020, 12, 1)), 190.321573, 1e-3);
+        CHECK_NEAR(d.balanceAsOf(tmOf(2021, 1, 1)), 0.0, 1e-9);
+        // E: no payment, rate > 0 - pure compounding P(1+i)^n:
+        // 100 * 1.01^10.
+        Liability e;
+        e.principalEur = 100.0;
+        e.annualRatePct = 12.0;
+        e.startYear = 2020; e.startMonth = 1; e.startDay = 1;
+        CHECK_NEAR(e.balanceAsOf(tmOf(2020, 11, 1)), 110.462213, 1e-3);
+        // E2: no payment, zero rate - the principal stands.
+        Liability e2;
+        e2.principalEur = 555.0;
+        e2.startYear = 2020; e2.startMonth = 1; e2.startDay = 1;
+        CHECK_NEAR(e2.balanceAsOf(tmOf(2020, 6, 1)), 555.0, 1e-9);
+        // F: a future start - 0 elapsed months, the full principal.
+        Liability f;
+        f.principalEur = 321.0;
+        f.annualRatePct = 5.0;
+        f.startYear = 2030; f.startMonth = 1; f.startDay = 1;
+        f.monthlyPaymentEur = 10.0;
+        CHECK_NEAR(f.balanceAsOf(tmOf(2026, 1, 1)), 321.0, 1e-9);
+    }
+
+    SECTION("v5 storage: sheet round trip, v3/v4 upgrade, clearAll preservation");
+    const std::string dir =
+            (std::filesystem::temp_directory_path() / "nf_tx_core_tests_sheet").string() + "/";
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+
+    // v5 round trip with content: the section text rides the state file
+    // byte-exact, clearAll (the import-state reset) does not touch it.
+    {
+        BalanceSheet sheet;
+        CHECK(sheet.setLine("L;a1;Mort;;gage;150000;3.575;2019-02-01;2049-02-01;899.99"));
+        CHECK(sheet.setLine("L;a2;Car;20000;4.9;2024-05-01;-;-"));
+        std::tm asof{};
+        asof.tm_year = 2026 - 1900;
+        asof.tm_mon = 0;
+        asof.tm_mday = 15;
+        const std::string text = sheet.serialize(asof);
+
+        TransactionManager tm;
+        tm.setBalanceSheetText(text);
+        CHECK(tm.saveData(dir));
+        for (const char *name: {"wallets", "state", "cardWallets"}) {
+            std::ifstream f(dir + name, std::ios::binary);
+            char hb[5] = {};
+            f.read(hb, 5);
+            CHECK(std::memcmp(hb, "CWCP", 4) == 0);
+            CHECK(hb[4] == BinaryUtil::kVersionV5);
+        }
+        // The section is stored as plain text inside the file (the label
+        // escaped per the line rule).
+        {
+            std::ifstream f(dir + "state", std::ios::binary);
+            std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            CHECK(raw.find("Mort;;gage") != std::string::npos);
+        }
+
+        TransactionManager tm2;
+        tm2.loadData(dir);
+        CHECK(tm2.getBalanceSheetText() == text);
+        // The clearAll preservation IN the transport: the reset wipes the
+        // (empty) import state, the sheet section survives it.
+        tm2.clearAll();
+        CHECK(tm2.getWallets().empty());
+        CHECK(tm2.getBalanceSheetText() == text);
+        CHECK(tm2.saveData(dir));
+
+        BalanceSheet loaded;
+        CHECK(loaded.parse(tm2.getBalanceSheetText()) == 0);
+        CHECK(loaded.getLiabilities().size() == 2);
+        CHECK(loaded.getLiabilities()[0].label == "Mort;gage");
+        CHECK(loaded.serialize(asof) == text);
+    }
+
+    // Little-endian byte assembler for the LEGACY v3/v4 stores (their
+    // state layout is the current one MINUS the v5 sheet section at the
+    // tail; the wallet stores are empty).
+    auto assembleLegacyState = [&](uint8_t version) {
+        const std::string sub = dir + "legacy" + std::to_string(version) + "/";
+        std::filesystem::remove_all(sub);
+        std::filesystem::create_directories(sub);
+        auto writeHeader = [&version](std::ofstream &f) {
+            f.write(BinaryUtil::kMagic, 4);
+            f.write(reinterpret_cast<const char *>(&version), 1);
+        };
+        const int32_t zero = 0;
+        {
+            std::ofstream f(sub + "wallets", std::ios::binary | std::ios::trunc);
+            writeHeader(f);
+            f.write(reinterpret_cast<const char *>(&zero), 4);   // 0 wallets
+        }
+        {
+            std::ofstream f(sub + "cardWallets", std::ios::binary | std::ios::trunc);
+            writeHeader(f);
+            f.write(reinterpret_cast<const char *>(&zero), 4);   // 0 wallets
+        }
+        {
+            std::ofstream f(sub + "state", std::ios::binary | std::ios::trunc);
+            writeHeader(f);
+            auto push_u8 = [&f](uint8_t v) { f.write(reinterpret_cast<const char *>(&v), 1); };
+            auto push_i32 = [&f](int32_t v) { f.write(reinterpret_cast<const char *>(&v), 4); };
+            auto push_str = [&f, &push_i32](const std::string &s) {
+                const int32_t n = static_cast<int32_t>(s.size());
+                f.write(reinterpret_cast<const char *>(&n), 4);
+                f.write(s.data(), static_cast<std::streamsize>(n));
+            };
+            // hasTxData, counters, one currency, no card types, NO section
+            push_u8(1);
+            push_i32(9);
+            push_i32(9);
+            push_i32(1);
+            push_str("BTC");
+            push_i32(0);
+        }
+        return sub;
+    };
+
+    // v3 -> v5 and v4 -> v5: the legacy state reads with the EMPTY sheet
+    // (the in-memory upgrade) and re-saves as v5 with the section intact.
+    for (const uint8_t legacy: {(uint8_t) BinaryUtil::kVersionV3, (uint8_t) BinaryUtil::kVersionV4}) {
+        const std::string legacyDir = assembleLegacyState(legacy);
+        TransactionManager tm;
+        tm.loadData(legacyDir);
+        CHECK(tm.getWallets().empty());       // the empty store read clean
+        CHECK(tm.getBalanceSheetText().empty());   // pre-v5: no section
+        CHECK(tm.getSaveDir() == legacyDir);   // the loaded dir is the auto-save target
+        tm.setBalanceSheetText("L;z1;Legacy sheet;100;0;2020-01-01;-;-");
+        CHECK(tm.saveData(legacyDir));
+        std::ifstream f(legacyDir + "state", std::ios::binary);
+        char hb[5] = {};
+        f.read(hb, 5);
+        CHECK(hb[4] == BinaryUtil::kVersionV5);
+        TransactionManager tm2;
+        tm2.loadData(legacyDir);
+        CHECK(tm2.getBalanceSheetText() == "L;z1;Legacy sheet;100;0;2020-01-01;-;-");
+    }
+
+    SECTION("user sheet: the init/restore sequence preserves it (C surface)");
+    {
+        const std::string saveDir =
+                (std::filesystem::temp_directory_path() / "nf_tx_core_tests_sheet_app")
+                        .string() + "/";
+        std::filesystem::remove_all(saveDir);
+        std::filesystem::create_directories(saveDir);
+
+        DataHolder &dh = DataHolder::GetInstance();
+
+        // A restore-style cold start: a fresh manager, init finds no store.
+        dh.SetTransactionManager(std::make_unique<TransactionManager>());
+        CHECK(!init("tests.log", std::string()));
+        CHECK(!dh.isInitialized());
+
+        // The user adds a liability. The core auto-save is skipped: no
+        // store location is known yet (nothing loaded or saved on this
+        // core incarnation) - the entry is in memory, the app's regular
+        // save (after the next import) persists it.
+        const std::string entry = "L;loan-1;Mortgage;150000;3.575;2019-02-01;2049-02-01;899.99";
+        CHECK(sheetSet(entry));
+        CHECK(sheetList("L").size() == 1);
+        CHECK(sheetList("L")[0].find(";Mortgage;") != std::string::npos);
+        CHECK(sheetList("L")[0].find(";bal;") != std::string::npos);
+
+        // The Firebase-restore shape: a NEW manager (the init of the next
+        // incarnation) + clearAll + the set*Data sequence. The sheet lives
+        // in the holder, so every step of it leaves the entry in place.
+        dh.SetTransactionManager(std::make_unique<TransactionManager>());
+        clearAll();
+        CHECK(getActiveModes() == 0);
+        setWalletData({walletDataXml(1, "BTC", 2.5)});
+        setTransactionData({txDataXml(10, "BTC", 2.5)});
+        CHECK(getActiveModes() == 1);
+        CHECK(sheetList("L").size() == 1);   // survived the whole sequence
+
+        // The app's post-import save lands the v5 store: the import state
+        // AND the sheet section (the holder injects it right before the
+        // write, so the restore sequence above could not lose it).
+        CHECK(save(saveDir));
+        {
+            std::ifstream f(saveDir + "state", std::ios::binary);
+            char hb[5] = {};
+            f.read(hb, 5);
+            CHECK(hb[4] == BinaryUtil::kVersionV5);
+            std::string raw((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+            CHECK(raw.find("Mortgage") != std::string::npos);
+        }
+
+        // Next cold start: a fresh manager loads the store (leg 1) - the
+        // import state resets to the saved rows, the sheet comes back
+        // from the v5 section.
+        dh.SetTransactionManager(std::make_unique<TransactionManager>());
+        dh.loadData(saveDir);
+        CHECK(getActiveModes() == 1);   // the restored import state
+        auto lines = sheetList("L");
+        CHECK(lines.size() == 1);
+        CHECK(lines[0].find(";Mortgage;") != std::string::npos);
+        CHECK(dh.getSheet().getLiabilities()[0].principalEur == 150000.0);
+
+        // Edit the entry (upsert) - the core auto-saves to the loaded dir.
+        CHECK(sheetSet("L;loan-1;Mortgage (renovated);160000;3.575;2019-02-01;2049-02-01;950.00"));
+        dh.SetTransactionManager(std::make_unique<TransactionManager>());
+        dh.loadData(saveDir);
+        CHECK(sheetList("L")[0].find(";Mortgage (renovated);") != std::string::npos);
+
+        // Delete the entry - the section comes back empty on reload.
+        CHECK(sheetDelete("Lloan-1"));
+        CHECK(sheetList("L").empty());
+        CHECK(!sheetDelete("Lloan-1"));   // already gone
+        dh.SetTransactionManager(std::make_unique<TransactionManager>());
+        dh.loadData(saveDir);
+        CHECK(sheetList("L").empty());
+        CHECK(dh.getSheet().getLiabilities().empty());
+
+        // Cold DataHolder again: the next test (testImportStateSemantics)
+        // starts from a never-ready manager.
+        dh.SetTransactionManager(std::make_unique<TransactionManager>());
+        CHECK(!dh.isInitialized());
     }
     std::filesystem::remove_all(dir);
 }
@@ -2980,6 +3318,7 @@ int main() {
     testUnlimitedPersistence();
     testLegacyV2Migration();
     testSaveFormatV3LegacyRead();
+    testBalanceSheet();
     testPriceCache();
     testPriceHierarchyReorder();
     testXmlSerialization();

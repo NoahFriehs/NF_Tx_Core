@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 set(NF_TX_CORE_SOURCES
+        BalanceSheet.cpp
         DataHolder.cpp
         FileLog.cpp
         Price/AssetValue.cpp

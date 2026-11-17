@@ -102,6 +102,26 @@ public:
     //! Replace the serializable state (clears, then restores)
     void setTransactionManagerState(const TransactionManagerState &state);
 
+    //!
+    //! The user-owned balance-sheet section of the state file (the core-
+    //! serialized sheet text). The manager is the TRANSPORT here: the
+    //! DataHolder owns the sheet and injects its text before every save; the
+    //! load path reads it back. clearAll() deliberately does NOT touch it -
+    //! the sheet is user-entered data, not import state (the restore
+    //! sequence init -> clearAll -> set*Data must never wipe it).
+    void setBalanceSheetText(const std::string &text);
+
+    //! The sheet section text of the last load/save (the default-constructed
+    //! manager has the empty section).
+    std::string getBalanceSheetText() const;
+
+    //!
+    //! The directory the last save/load ran against: the target of the
+    //! core's own sheet auto-saves (a sheet mutation re-saves the store
+    //! there so the user entry survives the next cold start without the
+    //! app doing anything). Empty until a save or load has run.
+    std::string getSaveDir() const;
+
     //! Process the transactions
     void processTransactions();
 
@@ -301,7 +321,13 @@ private:
     bool isReadyFlag = false;
     Mode currentMode = Default;
     size_t failedLines = 0;
-    bool upgradedLegacy_ = false;   // last load used v2 files: next save upgrades them
+    bool upgradedLegacy_ = false;   // last load used v2/v3/v4 files: next save upgrades them
+
+    // The balance-sheet section transport (see the public accessors:
+    // the DataHolder owns the sheet, this field carries it to the state
+    // file). clearAll() must not touch it (user data, not import state).
+    std::string balanceSheetText_;
+    std::string saveDir_;
 
     //! Get the currencies from the transactions
     void getCurrenciesFromTxs();

@@ -44,7 +44,7 @@ standalone build serves the unit-test suite and the CLI tester.
 ## Build & test
 
 ```bash
-# unit tests (ASan/UBSan build recommended): 860 checks, 0 failures (2026-11-16)
+# unit tests (ASan/UBSan build recommended): 959 checks, 0 failures (2026-11-17)
 cmake -S . -B cmake-build-tests -DCMAKE_BUILD_TYPE=Debug && cmake --build -B cmake-build-tests -j8
 cd cmake-build-tests && ctest --output-on-failure   # 2 entries: unit_tests + big_fixture_10k
 # local fuzz (manual, no CI surface; run in the sanitizer build):

@@ -364,6 +364,25 @@ int getActiveModes() {
     return DataHolder::GetInstance().GetTransactionManager()->getActiveModes();
 }
 
+// The user-owned balance sheet (see BalanceSheet.h for the line contract;
+// the sheet itself lives in the DataHolder, the manager is the save
+// transport). The sheet is USER data, not import state: the operations
+// need a manager instance (created by the app's startup init) but NOT an
+// import, so the holder-level methods - which guard themselves and never
+// throw across this C boundary - are called directly, without the
+// isInitialized() check appendWithData's kind uses.
+bool sheetSet(const std::string &line) {
+    return DataHolder::GetInstance().sheetSet(line);
+}
+
+bool sheetDelete(const std::string &kindId) {
+    return DataHolder::GetInstance().sheetDelete(kindId);
+}
+
+std::vector<std::string> sheetList(const std::string &kind) {
+    return DataHolder::GetInstance().sheetList(kind);
+}
+
 // The cut result is per-thread state on TransactionManager itself - no live
 // manager is needed, so these are safe to call before any init (they report
 // the not-cut defaults then).
@@ -914,6 +933,50 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_getStaticP
     } catch (...) {
         FileLog::e("library", "JNI getStaticPrice failed: unknown error");
         return 0.0;
+    }
+}
+
+// Companion-level like the other stateless accessors: the sheet lives in
+// the process-lifetime DataHolder, no service instance needed.
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_sheetSet(
+        JNIEnv *env, jclass, jstring line) {
+    try {
+        ScopedUtfChars lineChars(env, line);
+        if (!lineChars) return JNI_FALSE;
+        return sheetSet(lineChars.value()) ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI sheetSet failed: " + std::string(e.what()));
+        return JNI_FALSE;
+    }
+}
+
+extern "C"
+JNIEXPORT jboolean JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_sheetDelete(
+        JNIEnv *env, jclass, jstring kindId) {
+    try {
+        ScopedUtfChars kindIdChars(env, kindId);
+        if (!kindIdChars) return JNI_FALSE;
+        return sheetDelete(kindIdChars.value()) ? JNI_TRUE : JNI_FALSE;
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI sheetDelete failed: " + std::string(e.what()));
+        return JNI_FALSE;
+    }
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_sheetList(
+        JNIEnv *env, jclass, jstring kind) {
+    try {
+        ScopedUtfChars kindChars(env, kind);
+        if (!kindChars) return nullptr;
+        return stringsToJArray(env, sheetList(kindChars.value()));
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI sheetList failed: " + std::string(e.what()));
+        return nullptr;
     }
 }
 

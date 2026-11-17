@@ -269,6 +269,10 @@ struct TransactionManagerState {
     int walletIdCounter = 0;
     std::vector<std::string> currencies = {};
     std::vector<std::string> cardTxTypes = {};
+    // The user-owned balance-sheet section (the core-serialized sheet
+    // text, all collections in one line-based section). Transported here
+    // so the v5 state file carries it; empty on every pre-v5 file.
+    std::string balanceSheetText = {};
 };
 
 #endif //NF_TX_CORE_STRUCTS_H
