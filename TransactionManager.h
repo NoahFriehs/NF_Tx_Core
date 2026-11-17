@@ -221,6 +221,14 @@ public:
     //! Return the total value of assets
     double getTotalValueOfAssets() const;
 
+    //!
+    //! The total value of ALL inner wallets, the internal "EUR" cash
+    //! buffer INCLUDED (unlike [getTotalValueOfAssets], which excludes it
+    //! like every card/donut aggregate): the net-worth "tracked assets"
+    //! figure the balance-sheet snapshot injects - cash counts toward net
+    //! worth, the buffer is the user's tracked cash.
+    double getTotalValueOfAssetsIncludingBuffer() const;
+
     //! Return the total value of assets on card
     double getTotalValueOfAssetsCard() const;
 

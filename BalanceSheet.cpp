@@ -97,6 +97,13 @@ std::string formatDecimal(double v) {
     return std::string(buf);
 }
 
+std::string formatDecimalSigned(double v) {
+    if (!std::isfinite(v)) v = 0.0;
+    char buf[32];
+    std::snprintf(buf, sizeof(buf), "%.10g", v);
+    return std::string(buf);
+}
+
 bool parseTimestamp(const std::string &s, int &year, int &month, int &day,
                     int &hour, int &minute, int &second) {
     if (s.size() != 19 || s[4] != '-' || s[7] != '-' || s[10] != 'T' ||
@@ -485,4 +492,25 @@ double BalanceSheet::assetsTotal() const {
     double total = 0.0;
     for (const auto &a: assets_) total += a.valueEur;
     return total;
+}
+
+std::vector<std::string> BalanceSheet::snapshot(double trackedAssetsEur,
+                                                const std::tm &asOf) const {
+    const double nonFinancial = assetsTotal();
+    double liabilities = 0.0;
+    for (const auto &l: liabilities_) liabilities += l.balanceAsOf(asOf);
+    // SIGNED fields: the TRACKED value (a negative EUR buffer or a
+    // negative wallet can make it negative) and the NET (debts above
+    // assets). Never clamped, unlike the non-negative line fields (the
+    // asset sum and the liability sum are sums of non-negative values).
+    const double net = trackedAssetsEur + nonFinancial - liabilities;
+    std::string line = "NW;";
+    line += SheetSerde::formatDecimalSigned(trackedAssetsEur);
+    line += ';';
+    line += SheetSerde::formatDecimal(nonFinancial);
+    line += ';';
+    line += SheetSerde::formatDecimal(liabilities);
+    line += ';';
+    line += SheetSerde::formatDecimalSigned(net);
+    return {line};
 }

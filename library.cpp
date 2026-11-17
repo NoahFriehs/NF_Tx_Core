@@ -383,6 +383,10 @@ std::vector<std::string> sheetList(const std::string &kind) {
     return DataHolder::GetInstance().sheetList(kind);
 }
 
+std::vector<std::string> sheetSnapshot() {
+    return DataHolder::GetInstance().sheetSnapshot();
+}
+
 // The cut result is per-thread state on TransactionManager itself - no live
 // manager is needed, so these are safe to call before any init (they report
 // the not-cut defaults then).
@@ -976,6 +980,18 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_sheetList(
         return stringsToJArray(env, sheetList(kindChars.value()));
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI sheetList failed: " + std::string(e.what()));
+        return nullptr;
+    }
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_sheetSnapshot(
+        JNIEnv *env, jclass) {
+    try {
+        return stringsToJArray(env, sheetSnapshot());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI sheetSnapshot failed: " + std::string(e.what()));
         return nullptr;
     }
 }

@@ -83,3 +83,11 @@ std::vector<std::string> DataHolder::sheetList(const std::string &kind) {
     if (!transactionManager) return {};
     return sheet_.listLines(kind, SheetSerde::todayWallClock());
 }
+
+std::vector<std::string> DataHolder::sheetSnapshot() {
+    std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
+    if (!transactionManager) return {};
+    return sheet_.snapshot(
+            transactionManager->getTotalValueOfAssetsIncludingBuffer(),
+            SheetSerde::todayWallClock());
+}

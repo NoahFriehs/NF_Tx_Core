@@ -859,6 +859,16 @@ double TransactionManager::getTotalValueOfAssets() const {
     return walletsBalance.nativeBalance;
 }
 
+double TransactionManager::getTotalValueOfAssetsIncludingBuffer() const {
+    // The SAME priced wallet state as walletsBalance, minus the "EUR"
+    // skip: the buffer is tracked cash, part of the net worth.
+    long double sum = 0.0;
+    for (const auto &pair: walletBalanceMap) {
+        sum += pair.second.nativeBalance;
+    }
+    return static_cast<double>(sum);
+}
+
 double TransactionManager::getTotalBonus() const {
     return walletsBalance.nativeBonusBalance;
 }

@@ -93,6 +93,15 @@ public:
     //! computed at today. Empty when no live core.
     std::vector<std::string> sheetList(const std::string &kind);
 
+    //! The net-worth snapshot line(s) (see BalanceSheet::snapshot for the
+    //! NW line contract): the sheet state at today + the core's own
+    //! current EUR wallet value INCL. the internal EUR cash buffer, as
+    //! computed on the live manager's priced state (the buffer-inclusion
+    //! semantic is core-pinned HERE - every consumer of the snapshot gets
+    //! the same figure). Empty when no live core (the sheet has no wallet
+    //! values of its own).
+    std::vector<std::string> sheetSnapshot();
+
     //! The sheet state (read path of the save plumbing + the tests).
     const BalanceSheet &getSheet() {
         std::lock_guard<std::mutex> lock(mutexData);

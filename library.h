@@ -188,6 +188,15 @@ bool sheetDelete(const std::string &kindId);
 //! core.
 std::vector<std::string> sheetList(const std::string &kind);
 
+//! \brief The net-worth snapshot line(s) of the user-owned balance sheet
+//! (see BalanceSheet::snapshot for the NW line contract): the core's own
+//! current EUR wallet value (the internal EUR cash buffer INCLUDED - the
+//! buffer-inclusion semantic is core-pinned here, the display cannot
+//! drift from it) plus the declared asset sum, minus the current
+//! liability balances, the net value core-computed. The caller (the UI)
+//! shows the lines only. Empty when no live core.
+std::vector<std::string> sheetSnapshot();
+
 }
 
 #endif //NF_TX_CORE_LIBRARY_H

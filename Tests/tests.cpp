@@ -1511,8 +1511,121 @@ static void testBalanceSheet() {
         // starts from a never-ready manager.
         dh.SetTransactionManager(std::make_unique<TransactionManager>());
         CHECK(!dh.isInitialized());
+
+        // The snapshot on that cold core: empty sheet, no priced wallets
+        // - exactly the zero line (the UI hides it; never an error).
+        CHECK(sheetSnapshot().front() == "NW;0;0;0;0");
+    }
+
+    SECTION("snapshot: the net-worth contract (the NW line)");
+    {
+        std::tm asof{};
+        asof.tm_year = 2026 - 1900;
+        asof.tm_mon = 0;
+        asof.tm_mday = 15;
+
+        // 1. Empty sheet, no tracked value: the zero snapshot (EXACTLY
+        // the line the screen shows before any entry exists).
+        BalanceSheet empty;
+        const std::vector<std::string> zero = empty.snapshot(0.0, asof);
+        CHECK(zero.size() == 1);
+        CHECK(zero[0] == "NW;0;0;0;0");
+
+        // 2. Hand-computable: one annuity at n=12 (P=100000, 4.8% p.a.
+        // -> i=0.004, M=800: 100000*1.004^12 - 800*(1.004^12-1)/0.004
+        // = 95092.97925) + a zero-rate one at n=6 (12000 - 6*500 = 9000),
+        // two assets (355000), the tracked value injected by the caller.
+        BalanceSheet sheet;
+        CHECK(sheet.setLine("L;n-1;Mortgage;100000;4.8;2025-01-01;-;800"));
+        CHECK(sheet.setLine("L;n-2;Car;12000;0;2025-07-01;-;500"));
+        CHECK(sheet.setLine("A;n-3;House;REAL_ESTATE;350000;2025-06-15T14:05:09;-"));
+        CHECK(sheet.setLine("A;n-4;Bike;VEHICLE;5000;2020-01-01T12:00:00;-"));
+        const std::vector<std::string> snap = sheet.snapshot(1234.56, asof);
+        CHECK(snap.size() == 1);
+        CHECK(snap[0] == "NW;1234.56;355000;104092.9792;252141.5808");
+
+        // 3. Net worth SIGNED: debts above assets stay negative (never
+        // clamped like the non-negative line fields). A future start
+        // keeps the balance the full principal for this asOf, so the
+        // figure is determinate on the wall clock.
+        BalanceSheet underwater;
+        CHECK(underwater.setLine("L;z-1;Future;2500;0;2035-01-01;-;-"));
+        CHECK(underwater.setLine("A;z-2;Books;ART;500;2020-01-01T12:00:00;-"));
+        const std::vector<std::string> neg = underwater.snapshot(0.0, asof);
+        CHECK(neg.size() == 1);
+        CHECK(neg[0] == "NW;0;500;2500;-2000");
+
+        // 4. A NEGATIVE tracked value (the internal EUR buffer can run
+        // below zero - fiat spent above the tracked deposits - and so
+        // can a wallet): the field stays signed end-to-end, and the net
+        // sees the true value, not the clamped one.
+        BalanceSheet negTracked;
+        CHECK(negTracked.setLine("L;t-1;Future;2500;0;2035-01-01;-;-"));
+        const std::vector<std::string> negT = negTracked.snapshot(-44.05, asof);
+        CHECK(negT.size() == 1);
+        CHECK(negT[0] == "NW;-44.05;0;2500;-2544.05");
     }
     std::filesystem::remove_all(dir);
+}
+
+// The net-worth snapshot on the PRICED core state: the buffer-inclusion
+// semantic (the internal EUR cash buffer counts toward the tracked
+// value, unlike every card/donut aggregate) is asserted BY CONSTRUCTION
+// - the same priced state the card totals show, plus the buffer.
+static void testNetWorthSnapshot() {
+    SECTION("snapshot on the priced core state: buffer included (by construction)");
+    {
+        // 1000 EUR in, 600 EUR spent on 0.006 BTC: the inner EUR cash
+        // buffer sits at 400 next to the crypto position.
+        std::vector<std::string> data{
+                blockPitHeader(),
+                bpLine("01.01.2026 21:30:23", "Bitpanda", "Non-Taxable In", "", "", "EUR", "1000"),
+                bpLine("02.01.2026 21:30:23", "Bitpanda", "Trade", "EUR", "600", "BTC", "0.006")};
+        auto tm = buildTmFromBlockPitLines(data);
+        CHECK_NEAR(tm->getWallets().at("EUR").getBalance(), 400.0, 1e-9);
+        CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), 0.006, 1e-12);
+
+        const auto &curs = tm->getCurrencies();
+        std::vector<double> prices(curs.size(), 0.0);
+        for (size_t i = 0; i < curs.size(); i++) {
+            if (curs[i] == "BTC") prices[i] = 5000.0;   // 0.006 BTC = 30 EUR
+            // EUR MUST be injected explicitly: a cached 0.0 is a "no
+            // price" answer that beats the static fiat 1.0 fallback,
+            // and would zero the buffer out of the value.
+            if (curs[i] == "EUR") prices[i] = 1.0;
+        }
+        tm->setPrices(prices);
+        tm->calculateWalletBalances();
+
+        // The card total (EUR excluded, the D4 scope) and the tracked
+        // value the snapshot injects (the buffer IN).
+        CHECK_NEAR(tm->getTotalValueOfAssets(), 30.0, 1e-9);
+        CHECK_NEAR(tm->getTotalValueOfAssetsIncludingBuffer(), 430.0, 1e-9);
+
+        // The anchoring identity: the last "value" point of the daily
+        // series IS the card total (telescoping by construction) - the
+        // snapshot's tracked value is that figure plus the buffer.
+        double lastValue = 0.0;
+        for (const auto &row: tm->getDailySeries()) {
+            if (row.rfind("value;", 0) == 0) {
+                lastValue = std::stod(row.substr(row.rfind(';') + 1));
+            }
+        }
+        CHECK_NEAR(lastValue, tm->getTotalValueOfAssets(), 1e-6);
+
+        BalanceSheet sheet;
+        CHECK(sheet.setLine("A;h-1;House;REAL_ESTATE;200000;2026-01-01T12:00:00;-"));
+        const std::vector<std::string> snap = sheet.snapshot(
+                tm->getTotalValueOfAssetsIncludingBuffer(), SheetSerde::todayWallClock());
+        CHECK(snap.size() == 1);
+        CHECK(snap[0] == "NW;430;200000;0;200430");
+
+        // The same state WITHOUT the buffer in the injection: the old
+        // card-scope figure (what a D4-scoped display would show).
+        const std::vector<std::string> cardScope = sheet.snapshot(
+                tm->getTotalValueOfAssets(), SheetSerde::todayWallClock());
+        CHECK(cardScope[0] == "NW;30;200000;0;200030");
+    }
 }
 
 static void testBlockPitParser() {
@@ -3112,6 +3225,28 @@ static void testImportStateSemantics() {
     CHECK(getCardWalletsAsStrings()[0].find("<currencyType>MC</currencyType>")
           != std::string::npos);
     CHECK(getCardTransactionsAsStrings().size() == 1);
+
+    // The net-worth snapshot on the C surface: the core injects its own
+    // current EUR wallet value (the internal EUR buffer INCLUDED - there
+    // is none in this state, USDC only) into the sheet's snapshot; the
+    // caller sees the line only. A future liability start keeps the
+    // balance the full principal, determinate on the wall clock.
+    {
+        calculateBalances();   // builds the currency order
+        const auto &curs = getCurrencies();
+        std::vector<double> prices(curs.size(), 0.0);
+        for (size_t i = 0; i < curs.size(); i++) {
+            if (curs[i] == "USDC") prices[i] = 1.0;
+        }
+        setPrice(prices);   // 40 USDC @ 1.0 = 40
+        CHECK(sheetSet("L;cs-1;Future;2500;0;2035-01-01;-;-"));
+        CHECK(sheetSet("A;cs-2;Car;VEHICLE;7000;2026-01-01T12:00:00;-"));
+        const std::vector<std::string> snap = sheetSnapshot();
+        CHECK(snap.size() == 1);
+        CHECK(snap[0] == "NW;40;7000;2500;4540");
+        CHECK(sheetDelete("Lcs-1"));
+        CHECK(sheetDelete("Acs-2"));   // leave the holder state clean
+    }
 }
 
 // The dlsym surface — the C API the CLI tester loads via dlopen. Pins the
@@ -3407,6 +3542,7 @@ int main() {
     testLegacyV2Migration();
     testSaveFormatV3LegacyRead();
     testBalanceSheet();
+    testNetWorthSnapshot();
     testPriceCache();
     testPriceHierarchyReorder();
     testXmlSerialization();

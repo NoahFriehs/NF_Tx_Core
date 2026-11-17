@@ -112,8 +112,26 @@ public:
     std::vector<Asset> &mutableAssets() { return assets_; }
 
     //! The sum of the declared asset values (the non-financial part of
-    //! the later net-worth snapshot).
+    //! the net-worth snapshot).
     double assetsTotal() const;
+
+    //!
+    //! The net-worth snapshot - the read-only contract the net-worth
+    //! screen shows. One line for now; a later collection appends its
+    //! progress lines AFTER this one, so consumers dispatch on the kind
+    //! prefix instead of the position:
+    //!   NW;<trackedAssets>;<nonFinancial>;<liabilities>;<net>
+    //! [trackedAssetsEur] = the core's own current EUR wallet value, the
+    //! internal "EUR" cash buffer INCLUDED - injected by the caller (the
+    //! sheet holds no wallet state of its own; the buffer-inclusion
+    //! semantic is core-pinned at the injection point, so the display can
+    //! never drift from it). SIGNED: a negative buffer or a negative
+    //! wallet can make it negative; [nonFinancial] = assetsTotal();
+    //! [liabilities] = the sum of the closed-form current balances at
+    //! [asOf]; [net] = tracked + nonFinancial - liabilities (SIGNED -
+    //! debts above assets stay negative, never clamped).
+    std::vector<std::string> snapshot(double trackedAssetsEur,
+                                      const std::tm &asOf) const;
 
     //!
     //! The line-serde (the house string-line contract, core-owned):
@@ -215,6 +233,12 @@ std::string formatDate(int year, int month, int day);
 //! exact for any user-entered money/rate value, re-parses to the same
 //! double).
 std::string formatDecimal(double v);
+
+//! Format a SIGNED decimal for the line (same 10-significant-digit form,
+//! no negative clamp - the net-worth values may legitimately be negative
+//! (the tracked value and the net); non-finite input still formats as
+//! "0").
+std::string formatDecimalSigned(double v);
 
 //! Strict wall-clock timestamp parse (YYYY-MM-DDTHH:MM:SS, a real
 //! calendar day and clock time - the asset "updated" field).
