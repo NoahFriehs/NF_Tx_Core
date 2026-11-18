@@ -2949,9 +2949,10 @@ static void testSubDailyOpeningLine() {
 }
 
 static void testDailyWalletSeries() {
-    SECTION("getDailyWalletSeries: running token amounts per inner wallet");
+    SECTION("getDailyWalletSeries: running token amounts per inner wallet (buffer-inclusive scope)");
     // The viban row is written raw (cdcLine cannot fill the To columns): it
-    // hits the inner EUR wallet (must NOT appear) and the CRO wallet.
+    // hits the inner EUR wallet (a first-class line now: the per-wallet
+    // family is buffer-inclusive) and the CRO wallet.
     std::vector<std::string> data{
             CDC_HEADER,
             cdcLine("2023-04-01 12:34:56", "BTC", "1.0", "100", "crypto_purchase"),
@@ -2962,15 +2963,18 @@ static void testDailyWalletSeries() {
     };
     auto tm = buildTmFromCdcLines(data);
     auto rows = tm->getDailyWalletSeries();
-    // One line per (wallet, active day), chronological, running values.
+    // One line per (wallet, active day), chronological, running values;
+    // per day the currencies are alphabetical (CRO < EUR on the 06th).
     CHECK((rows == std::vector<std::string>({
             "BTC;2023-04-01;1.000000;0.000000",
             "ETH;2023-04-02;2.000000;0.000000",
             "LUNA;2023-04-03;3.000000;3.000000",
             "BTC;2023-04-05;0.500000;0.000000",   // 1.0 - 0.5, carried over the gap
-            "CRO;2023-04-06;1.500000;0.000000"})));
-    for (const auto &row: rows) CHECK(row.find("EUR;") != 0);   // no EUR lines
-    // Telescoping: the last running point of each currency equals its wallet.
+            "CRO;2023-04-06;1.500000;0.000000",
+            "EUR;2023-04-06;-30.000000;0.000000"   // the buffer's fiat leg
+    })));
+    // Telescoping: the last running point of each currency equals its
+    // wallet (the EUR side included - that is the buffer-inclusive scope).
     std::map<std::string, long double> lastBal, lastBonus;
     for (const auto &row: rows) {
         auto p1 = row.find(';');
@@ -2980,14 +2984,88 @@ static void testDailyWalletSeries() {
         lastBonus[row.substr(0, p1)] = std::stold(row.substr(p3 + 1));
     }
     for (const auto &entry: tm->getWallets()) {
-        if (entry.first == "EUR") continue;
         CHECK_NEAR(lastBal[entry.first], entry.second.getBalance(), 1e-12);
         CHECK_NEAR(lastBonus[entry.first], entry.second.getBonusBalance(), 1e-12);
     }
+    // REGRESSION GUARD on the scope split: the 4-line TOTAL family on the
+    // SAME state keeps its pinned crypto-only bytes (the buffer flow never
+    // leaks into spent/value/pl/bonus) - these are the pre-split bytes of
+    // exactly this fixture.
+    CHECK((tm->getDailySeries() == std::vector<std::string>({
+            "spent;2023-04-01;100.000000",
+            "value;2023-04-01;75352.000000",
+            "pl;2023-04-01;75252.000000",
+            "bonus;2023-04-01;0.000000",
+            "spent;2023-04-02;50.000000",
+            "value;2023-04-02;80113.820000",
+            "pl;2023-04-02;79963.820000",
+            "bonus;2023-04-02;0.000000",
+            "spent;2023-04-03;5.000000",
+            "value;2023-04-03;80113.820000",
+            "pl;2023-04-03;79958.820000",
+            "bonus;2023-04-03;0.000000",
+            "spent;2023-04-05;0.000000",
+            "value;2023-04-05;42437.820000",
+            "pl;2023-04-05;42282.820000",
+            "bonus;2023-04-05;0.000000",
+            "spent;2023-04-06;30.000000",
+            "value;2023-04-06;42437.907773",
+            "pl;2023-04-06;42252.907773",
+            "bonus;2023-04-06;0.000000"
+    })));
     {
         auto emptyTm = std::make_unique<TransactionManager>();
         CHECK(emptyTm->getDailyWalletSeries().empty());
     }
+}
+
+static void testDailyWalletSeriesEurScope() {
+    SECTION("per-wallet daily series: the EUR buffer line is first-class (multi-day running balance)");
+    // Multi-day buffer (the exchange-fiat side of internal movements):
+    // 1000 in, 600 spent on 0.006 BTC, 700 sale proceeds back, 300
+    // withdrawn -> hand-checked running EUR 1000 / 400 / 1100 / 800, with
+    // the BTC side 0.006 / 0.0 over days 2..3.
+    std::vector<std::string> data{
+            blockPitHeader(),
+            bpLine("01.01.2026 21:30:23", "Bitpanda", "Non-Taxable In", "", "", "EUR", "1000"),
+            bpLine("02.01.2026 21:30:23", "Bitpanda", "Trade", "EUR", "600", "BTC", "0.006"),
+            bpLine("03.01.2026 21:30:23", "Bitpanda", "Trade", "BTC", "0.006", "EUR", "700"),
+            bpLine("04.01.2026 21:30:23", "Bitpanda", "Withdrawal", "EUR", "300", "", ""),
+    };
+    auto tm = buildTmFromBlockPitLines(data);
+    CHECK((tm->getDailyWalletSeries() == std::vector<std::string>({
+            "EUR;2026-01-01;1000.000000;0.000000",
+            "BTC;2026-01-02;0.006000;0.000000",
+            "EUR;2026-01-02;400.000000;0.000000",
+            "BTC;2026-01-03;0.000000;0.000000",
+            "EUR;2026-01-03;1100.000000;0.000000",
+            "EUR;2026-01-04;800.000000;0.000000"})));
+    // The series lands on the wallet balances (the buffer included).
+    CHECK_NEAR(tm->getWallets().at("EUR").getBalance(), 800.0, 1e-9);
+    CHECK_NEAR(tm->getWallets().at("BTC").getBalance(), 0.0, 1e-9);
+}
+
+static void testSubDailyWalletSeriesEurScope() {
+    SECTION("sub-daily per-wallet series: the EUR line + the limited-window opening carries the buffer");
+    std::vector<std::string> data{
+            CDC_HEADER,
+            cdcLine("2023-03-01 12:00:00", "BTC", "1.0", "100", "crypto_purchase"),
+            "2023-03-02 12:00:00,eur buy,EUR,-30,CRO,1.5,USD,30,30,viban_purchase,",
+    };
+    auto tm = buildTmFromCdcLines(data);
+    // Unlimited: the EUR wallet's changed slot is an emitted line (stable
+    // per-slot alphabetical order: CRO before EUR).
+    CHECK((tm->getSubDailyWalletSeries(6 * 3600) == std::vector<std::string>({
+            "BTC;2023-03-01 12:00;1.000000;0.000000",
+            "CRO;2023-03-02 12:00;1.500000;0.000000",
+            "EUR;2023-03-02 12:00;-30.000000;0.000000"})));
+    // Fully stale limited window (all activity before the cut): only the
+    // opening lines, and they carry the EUR position the window inherits.
+    const long long from = 1677996000LL; // 2023-03-05 06:00:00 UTC (grid-aligned)
+    CHECK((tm->getSubDailyWalletSeries(6 * 3600, from) == std::vector<std::string>({
+            "BTC;2023-03-05 06:00;1.000000;0.000000",
+            "CRO;2023-03-05 06:00;1.500000;0.000000",
+            "EUR;2023-03-05 06:00;-30.000000;0.000000"})));
 }
 
 static void testDailyWalletSeriesEdges() {
@@ -4315,6 +4393,8 @@ int main() {
     testSubDailyOpeningLine();
     testDailyWalletSeries();
     testDailyWalletSeriesEdges();
+    testDailyWalletSeriesEurScope();
+    testSubDailyWalletSeriesEurScope();
     testParseBudget();
     testXmlRoundTrip();
     testAssetValue();

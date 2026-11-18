@@ -642,18 +642,24 @@ std::string windowKey(const std::tm &date, int windowSeconds) {
     return windowKeyFromEpoch(start);
 }
 
-//! Replay the per-wallet ledgers of the INNER wallets (EUR excluded, the
-//! same scope as WalletsBalance::fillFromWalletBalanceMap) chronologically
+//! Replay the per-wallet ledgers of the INNER wallets chronologically
 //! into one state per key (day or fixed slot). A std::map over the keys
 //! iterates chronologically (both key formats sort time-ordered).
+//! Scope split (both sides documented on the header): by default the
+//! inner fiat (EUR) wallet is EXCLUDED - the same scope as
+//! WalletsBalance::fillFromWalletBalanceMap, the money-spent / asset-card
+//! / 4-line total family. [includeEur] = true makes the EUR cash buffer a
+//! first-class line (the per-wallet series family) so its daily state can
+//! reach consumers that track the buffer-inclusive asset basis.
 std::map<std::string, DayState> buildWindowState(
         const std::map<std::string, Wallet> &wallets,
-        const std::function<std::string(const std::tm &)> &keyFn) {
+        const std::function<std::string(const std::tm &)> &keyFn,
+        bool includeEur = false) {
     std::map<std::string, DayState> days;
     for (const auto &entry: wallets) {
-        // Same scope as WalletsBalance::fillFromWalletBalanceMap (inner
-        // fiat wallet excluded).
-        if (entry.first == "EUR") continue;
+        // The default keeps the pinned inner-wallet scope (the fiat buffer
+        // excluded); only the per-wallet family opts the buffer in.
+        if (entry.first == "EUR" && !includeEur) continue;
         const std::vector<LedgerDelta> ledger = entry.second.getLedger();
         const auto &txs = entry.second.getTransactions();
         if (ledger.size() != txs.size()) {
@@ -685,14 +691,16 @@ std::map<std::string, DayState> buildWindowState(
 }
 
 std::map<std::string, DayState> buildDailyState(
-        const std::map<std::string, Wallet> &wallets) {
-    return buildWindowState(wallets, &dayKey);
+        const std::map<std::string, Wallet> &wallets, bool includeEur = false) {
+    return buildWindowState(wallets, &dayKey, includeEur);
 }
 
 std::map<std::string, DayState> buildWindowState(
-        const std::map<std::string, Wallet> &wallets, int windowSeconds) {
+        const std::map<std::string, Wallet> &wallets, int windowSeconds,
+        bool includeEur = false) {
     return buildWindowState(wallets,
-                            [windowSeconds](const std::tm &d) { return windowKey(d, windowSeconds); });
+                            [windowSeconds](const std::tm &d) { return windowKey(d, windowSeconds); },
+                            includeEur);
 }
 
 //! Epoch seconds of a "YYYY-MM-DD HH:MM" window key (UTC parts).
@@ -737,7 +745,9 @@ std::vector<std::string> TransactionManager::getDailySeries() const {
 }
 
 std::vector<std::string> TransactionManager::getDailyWalletSeries() const {
-    const std::map<std::string, DayState> days = buildDailyState(wallets);
+    // Buffer-inclusive scope: the EUR wallet's daily state is a first-
+    // class line here (the 4-line total above keeps the crypto-only scope).
+    const std::map<std::string, DayState> days = buildDailyState(wallets, /*includeEur=*/true);
     std::vector<std::string> rows;
     std::map<std::string, long double> runningBalance;
     std::map<std::string, long double> runningBonus;
@@ -806,7 +816,9 @@ static void emitSubDailyOpeningState(
 std::vector<std::string> TransactionManager::getSubDailyWalletSeries(
         int windowSeconds, long long fromEpoch) const {
     if (windowSeconds <= 0) return {};
-    const auto windows = buildWindowState(wallets, windowSeconds);
+    // Buffer-inclusive scope (the daily sibling above), incl. the
+    // opening state of a limited window (it carries the EUR position).
+    const auto windows = buildWindowState(wallets, windowSeconds, /*includeEur=*/true);
     std::vector<std::string> rows;
     std::map<std::string, long double> runningBalance;
     std::map<std::string, long double> runningBonus;

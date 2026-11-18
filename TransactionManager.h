@@ -164,11 +164,12 @@ public:
     std::vector<std::string> getMoneySpentSeries() const;
 
     //!
-    //! Daily accounting series of the inner wallets (EUR excluded, the same
-    //! scope as the money-spent/asset cards via
-    //! WalletsBalance::fillFromWalletBalanceMap), reconstructed by replaying
-    //! the per-wallet ledgers chronologically. One line per active day per
-    //! series, oldest first:
+    //! Daily accounting series of the inner wallets (EUR cash buffer
+    //! EXCLUDED - the total/card scope, the same as the money-spent/asset
+    //! cards via WalletsBalance::fillFromWalletBalanceMap; the scope split
+    //! with the buffer-inclusive per-wallet sibling is documented there),
+    //! reconstructed by replaying the per-wallet ledgers chronologically.
+    //! One line per active day per series, oldest first:
     //!   "spent;YYYY-MM-DD;v"   money spent during that day (flow)
     //!   "value;YYYY-MM-DD;v"   total asset value at end of day, EUR at the
     //!                          current prices (stock)
@@ -179,15 +180,19 @@ public:
     std::vector<std::string> getDailySeries() const;
 
     //!
-    //! Per-wallet daily series of the inner wallets (same scope as
-    //! getDailySeries), in UNPRICED token amounts: one line per (wallet,
-    //! active day) in which the wallet's totals changed, oldest first:
+    //! Per-wallet daily series of the inner wallets INCLUDING the internal
+    //! EUR cash buffer (the per-wallet scope: buffer-inclusive, unlike the
+    //! crypto-only total/card family above - the split is deliberate so a
+    //! buffer-inclusive asset basis has a daily surface), in UNPRICED
+    //! token amounts: one line per (wallet, active day) in which the
+    //! wallet's totals changed, oldest first:
     //!   "CURRENCY;YYYY-MM-DD;runningBalance;runningBonus"
-    //! The running values carry over across gaps, so "last line for a
-    //! currency at or before date D" is the position as of D. A consumer
-    //! values each point with the prices valid at that time (historical
-    //! prices for the chart panels); getDailySeries above instead fixes
-    //! the current prices.
+    //! The EUR line runs in fiat (its "price" is 1.0 by definition). The
+    //! running values carry over across gaps, so "last line for a currency
+    //! at or before date D" is the position as of D. A consumer values
+    //! each point with the prices valid at that time (historical prices
+    //! for the chart panels); getDailySeries above instead fixes the
+    //! current prices.
     std::vector<std::string> getDailyWalletSeries() const;
 
     //!
@@ -203,8 +208,8 @@ public:
 
     //!
     //! Per-wallet series in UNPRICED token amounts (the windowed sibling of
-    //! getDailyWalletSeries): one line per (wallet, changed slot), oldest
-    //! first:
+    //! getDailyWalletSeries - buffer-inclusive scope, EUR line included):
+    //! one line per (wallet, changed slot), oldest first:
     //!   "CURRENCY;YYYY-MM-DD HH:MM;runningBalance;runningBonus"
     //! The slot is the transaction epoch floored to [windowSeconds]; the
     //! running values carry over across gaps (and across the [fromEpoch]
