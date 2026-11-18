@@ -3767,12 +3767,17 @@ static void testDlsymSurfaceLinkage() {
     SECTION("dlsym surface: series accessors export plain C names");
     using DailyFn = std::vector<std::string> (*)();
     using SubDailyFn = std::vector<std::string> (*)(int, long long);
+    using ReturnsFn = std::string (*)(const std::string &);
     const DailyFn daily = getDailyWalletSeries;
     const SubDailyFn spent = getSubDailySpentSeries;
     const SubDailyFn wallet = getSubDailyWalletSeries;
+    const ReturnsFn returns = computeReturns;
     CHECK(daily != nullptr);
     CHECK(spent != nullptr);
     CHECK(wallet != nullptr);
+    // Link-level plain-name check: a C++-linkage (mangled) regression in
+    // the computeReturns definition fails this target's link.
+    CHECK(returns != nullptr);
 
     // Runtime confirmation through the plain symbols, consuming them the
     // way the tester does (C init -> calculate -> read the series).
@@ -4172,6 +4177,108 @@ static void testCsvExport() {
 }
 
 
+// --------------------------------------------------- return-metric tests ---
+//
+// The TWR + MWR/IRR contract of the core's pure return metric, pinned
+// against hand-computed fixtures (every expected figure derived
+// independently of the code under test): the chain-of-periods TWR, the
+// bisection MWR (the window-rate equation V_end = V_0*x + the grown
+// post-start flows), the 365-geometric annualization, and the honesty
+// markers (<30-day span, all-zero CF stream, non-computable periods).
+
+static void testReturnMetrics() {
+    SECTION("portfolio-return metric: hand-computed TWR + MWR/IRR fixtures");
+
+    // Two-deposit drift: +10 % price, a 50 EUR deposit mid-way, +10 % on
+    // both blocks. Hand: TWR = 1.1 * 1.0 * 1.1 - 1 = 0.21 exactly; the
+    // MWR root of 176 - 100x - 50*sqrt(x) = 0 is x = 1.21 exactly (the
+    // quadratic in y = sqrt(x): 50y^2 - 25y - 88 = 0), so both metrics
+    // agree here by construction.
+    CHECK((computeReturns(
+                  "R;2023-01-01;100;0\n"
+                  "R;2023-02-10;110;0\n"
+                  "R;2023-02-20;160;50\n"
+                  "R;2023-04-11;176;0") == "TWR;0.2100;1.0052;3;0\nMWR;0.2100;1.0052;100"));
+
+    // Mid-hold withdrawal: +15 % price, a 15 EUR withdrawal, then a
+    // smaller drift. Hand: TWR = 1.15 * 1.0 * (224.0601/215) - 1
+    // = 0.1985 (four decimals); the MWR equation 224.0601 - 200x +
+    // 15*x^(1/3) = 0 was built to root at x ~= 1.2 (r ~= 0.2), which a
+    // withdrawal must pull ABOVE the TWR - the metrics diverge and each
+    // pins its own figure.
+    CHECK((computeReturns(
+                  "R;2023-01-01;200;0\n"
+                  "R;2023-01-31;230;0\n"
+                  "R;2023-03-02;215;-15\n"
+                  "R;2023-04-01;224.0601;0") == "TWR;0.1985;1.0838;3;0\nMWR;0.2000;1.0947;90"));
+
+    // Zero-CF drift: the all-zero flow stream -> the MWR line carries the
+    // marker (the IRR carries nothing beyond the TWR), while the TWR
+    // degrades to the price return: 54/50 - 1 = 0.08 exactly.
+    CHECK((computeReturns(
+                  "R;2023-01-01;50;0\n"
+                  "R;2023-02-10;60;0\n"
+                  "R;2023-04-01;54;0") == "TWR;0.0800;0.3663;2;0\nMWR;INSUFFICIENT;90"));
+
+    // Single deposit at inception (the deposit rides the inception
+    // value; V_0 already values it, so the post-start CF stream is
+    // empty): the MWR reduces to x = V_end/V_0 and MUST equal the TWR
+    // (121/100 - 1 = 0.21, the convergence the metric must show).
+    CHECK((computeReturns(
+                  "R;2023-01-01;100;100\n"
+                  "R;2023-04-11;121;0") == "TWR;0.2100;1.0052;1;0\nMWR;0.2100;1.0052;100"));
+
+    // Two-year annualization: +20 % per 365 days over exactly 730 days.
+    // Hand: absolute = 1.44 - 1 = 0.44, annualized = sqrt(1.44) - 1
+    // = 0.20 EXACTLY (the 365-geometric over 730 days is a square
+    // root); the all-zero CF stream keeps the MWR marked.
+    CHECK((computeReturns(
+                  "R;2022-01-01;100;0\n"
+                  "R;2023-01-01;120;0\n"
+                  "R;2024-01-01;144;0") == "TWR;0.4400;0.2000;2;0\nMWR;INSUFFICIENT;730"));
+
+    // Negative-V skip window: two periods start at V <= 0 and are
+    // skipped (the count is reported, not hidden); the computable period
+    // pins the absolute (45-30)/30 = 0.5, the MWR roots the equation
+    // 45 + 5x - 37*x^(50/80) = 0 (V_0 < 0 - still well defined in the
+    // bracket).
+    CHECK((computeReturns(
+                  "R;2023-01-01;-5;0\n"
+                  "R;2023-01-11;-2;0\n"
+                  "R;2023-01-31;30;37\n"
+                  "R;2023-03-22;45;0") == "TWR;0.5000;5.3594;1;2\nMWR;0.8427;15.2593;80"));
+
+    // Sub-30-day window: neither metric may emit a percentage (no
+    // silent, no unqualified figures) - both lines carry the marker,
+    // the counts stay honest (two computable periods, 20-day span).
+    CHECK((computeReturns(
+                  "R;2023-01-01;100;0\n"
+                  "R;2023-01-11;110;10\n"
+                  "R;2023-01-21;130;0") == "TWR;INSUFFICIENT;2;0\nMWR;INSUFFICIENT;20"));
+
+    // Malformed lines (foreign prefix, impossible calendar day 2023-02-
+    // 30, a short line, a non-numeric value) are skipped, not fatal: the
+    // metric runs over the three valid lines (span 96, TWR = 1.3 - 1
+    // = 0.30 exactly).
+    CHECK((computeReturns(
+                  "R;2023-01-01;100;0\n"
+                  "not-a-metrics-line\n"
+                  "R;2023-02-30;105;0\n"
+                  "R;2023-01-05\n"
+                  "R;2023-01-06;abc;0\n"
+                  "R;2023-01-07;110;10\n"
+                  "R;2023-04-07;143;0") == "TWR;0.3000;1.7116;2;0\nMWR;0.3019;1.7270;96"));
+
+    // Empty input has no honest number: the result is empty (the caller
+    // shows its own not-ready state), not a marker pair.
+    CHECK(computeReturns("").empty());
+
+    // One line is a zero-day window: the metrics are INSUFFICIENT with
+    // the honest zero counts (no period, no span).
+    CHECK((computeReturns("R;2023-01-01;100;0") ==
+            "TWR;INSUFFICIENT;0;0\nMWR;INSUFFICIENT;0"));
+}
+
 int main() {
     FileLog::init("tests.log", true, FileLog::LOG_ERROR);   // quiet: only errors go to file
 
@@ -4224,6 +4331,7 @@ int main() {
     testCsvExport();
     testDlsymSurfaceLinkage();
     testAlerts();
+    testReturnMetrics();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,
                 g_failures == 1 ? "" : "s");

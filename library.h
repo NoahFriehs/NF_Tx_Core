@@ -220,6 +220,16 @@ std::string exportCsv();
 //! when no live core or nothing fired.
 std::vector<std::string> alertCheck();
 
+//! The portfolio return metrics (TWR + MWR/IRR) over a priced daily
+//! series - the pure core math: computes the two-line metric result
+//! from [series] only (see ReturnMetrics.h for the line contract,
+//! the period/skip guards and the INSUFFICIENT markers). Stateless -
+//! no DataHolder access, callable from any thread. Empty result for an
+//! empty series. NOTE (dlsym surface contract): plain-C exported name,
+//! but NOT part of the tester's dlsym set (the app calls it through
+//! its JNI pair) - do not add it to the tester for that reason.
+std::string computeReturns(const std::string &series);
+
 }
 
 #endif //NF_TX_CORE_LIBRARY_H

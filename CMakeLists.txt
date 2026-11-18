@@ -14,6 +14,7 @@ set(NF_TX_CORE_SOURCES
         Price/AssetValue.cpp
         Price/Cache.cpp
         Price/PriceCache.cpp
+        ReturnMetrics.cpp
         Transaction/BaseTransaction.cpp
         TransactionManager.cpp
         TransactionParser.cpp

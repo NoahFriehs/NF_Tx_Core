@@ -2,6 +2,7 @@
 #include "FileLog.h"
 #include "DataHolder.h"
 #include "Price/StaticPrices.h"
+#include "ReturnMetrics.h"
 #include "TransactionParser.h"
 #include "TransactionManager.h"
 #include "TimeSpan.h"
@@ -393,6 +394,12 @@ std::string exportCsv() {
 
 std::vector<std::string> alertCheck() {
     return DataHolder::GetInstance().alertCheck();
+}
+
+// Pure stateless math over the caller's lines - no live core needed, so
+// this is safe to call before any init (like the budget cut accessors).
+std::string computeReturns(const std::string &series) {
+    return ReturnMetrics::compute(series);
 }
 
 // The cut result is per-thread state on TransactionManager itself - no live
@@ -1029,6 +1036,21 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_alertCheck
         return stringsToJArray(env, alertCheck());
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI alertCheck failed: " + std::string(e.what()));
+        return nullptr;
+    }
+}
+
+extern "C"
+JNIEXPORT jstring JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_computeReturns(
+        JNIEnv *env, jclass, jstring series) {
+    try {
+        ScopedUtfChars seriesChars(env, series);
+        if (!seriesChars) return nullptr;
+        const std::string result = computeReturns(seriesChars.value());
+        return env->NewStringUTF(result.c_str());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI computeReturns failed: " + std::string(e.what()));
         return nullptr;
     }
 }
