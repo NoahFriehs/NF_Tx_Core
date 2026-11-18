@@ -1,8 +1,8 @@
 // The user-owned balance-sheet state of the core (ruling: offline
 // functionality lives in the core). The sheet holds the collections the
-// user maintains by hand - liabilities and non-financial assets in this
-// build (goals join in later) - plus the core-owned line-serde that is
-// ALSO the v5 save-section format: the on-disk section, the C-surface lines and the
+// user maintains by hand - liabilities, non-financial assets and goals in
+// this build - plus the core-owned line-serde that is ALSO the v5
+// save-section format: the on-disk section, the C-surface lines and the
 // UI rows are the same text, so the app never re-implements the contract.
 //
 // The sheet is NOT import state: clearAll() (the import-state reset) must
@@ -36,6 +36,20 @@ const char *categoryToken(AssetCategory c);
 
 //! Parse a serde category token (case-sensitive). false = unknown token.
 bool categoryFromToken(const std::string &token, AssetCategory &out);
+
+//! The metric a goal tracks (the core owns the two-token vocabulary;
+//! the sheet's GP progress lines carry the metric's VALUE, never a
+//! recomputation of it - one source of truth, the app renders only).
+enum class GoalMetric {
+    NetWorth,   //!< "NET_WORTH" - the snapshot's net line
+    Assets,     //!< "ASSETS" - the snapshot's tracked-assets line
+};
+
+//! The serde token of [m] ("NET_WORTH" / "ASSETS").
+const char *metricToken(GoalMetric m);
+
+//! Parse a serde metric token (case-sensitive). false = unknown token.
+bool metricFromToken(const std::string &token, GoalMetric &out);
 
 //! One user-maintained debt line (the liability collection). The current
 //! balance is core-computed (closed-form amortization) and never
@@ -79,6 +93,32 @@ struct Liability {
     double balanceAsOf(const std::tm &asOf) const;
 };
 
+//! One user-maintained goal (the goal collection): a declared target
+//! amount on one of the two core metrics. [progress] is core-computed in
+//! the snapshot from the metric's current value - the user declares the
+//! TARGET, the core owns the math (no contribution projection, no
+//! forecast: the target date is a reference point, not an input to any
+//! computation in this build).
+struct Goal {
+    //! App-generated id (a UUID), the upsert/delete key. Same rules as
+    //! Liability::id.
+    std::string id;
+    //! Free user text (escaped as ';;' in the line format).
+    std::string label;
+    //! The declared target, EUR (>= 0). 0 is degenerate: the GP line
+    //! carries the insufficient marker instead of a progress value (the
+    //! core never divides by it).
+    double targetEur = 0.0;
+    //! Optional target date - a reference point the display shows, never
+    //! consumed by the core's math.
+    bool hasTargetDate = false;
+    //! The target date, exactly as displayed ("YYYY-MM-DD", the
+    //! validated form, stored verbatim like Asset::updated).
+    std::string targetDate;
+    //! The metric the goal tracks ("NET_WORTH" / "ASSETS").
+    GoalMetric metric = GoalMetric::NetWorth;
+};
+
 //! One user-maintained non-financial asset entry (the asset collection).
 //! PURE STATIC value: no schedule math - the user re-declares the value
 //! when it changes and stamps [updated], the "honesty signal" of how
@@ -111,16 +151,21 @@ public:
     const std::vector<Asset> &getAssets() const { return assets_; }
     std::vector<Asset> &mutableAssets() { return assets_; }
 
+    //! The goal collection (active; input order).
+    const std::vector<Goal> &getGoals() const { return goals_; }
+    std::vector<Goal> &mutableGoals() { return goals_; }
+
     //! The sum of the declared asset values (the non-financial part of
     //! the net-worth snapshot).
     double assetsTotal() const;
 
     //!
     //! The net-worth snapshot - the read-only contract the net-worth
-    //! screen shows. One line for now; a later collection appends its
-    //! progress lines AFTER this one, so consumers dispatch on the kind
-    //! prefix instead of the position:
+    //! screen shows. Consumers dispatch on the KIND PREFIX, never the
+    //! position (each collection appends its lines after the NW line):
     //!   NW;<trackedAssets>;<nonFinancial>;<liabilities>;<net>
+    //! followed by one GP line per goal, in stored goal order:
+    //!   GP;<id>;<current>;<target>;<progress|->;<reached|->>
     //! [trackedAssetsEur] = the core's own current EUR wallet value, the
     //! internal "EUR" cash buffer INCLUDED - injected by the caller (the
     //! sheet holds no wallet state of its own; the buffer-inclusion
@@ -130,6 +175,13 @@ public:
     //! [liabilities] = the sum of the closed-form current balances at
     //! [asOf]; [net] = tracked + nonFinancial - liabilities (SIGNED -
     //! debts above assets stay negative, never clamped).
+    //! GP line fields: [current] = the goal's METRIC value (NET_WORTH =
+    //! the net field, ASSETS = the tracked value - both SIGNED); [target]
+    //! as declared; [progress] = current / target (SIGNED, unclamped),
+    //! OR "-" for a degenerate target (<= 0: the insufficient marker -
+    //! the core never divides); [reached] = "reached" when progress >= 1,
+    //! "-" otherwise (and on a degenerate target: no progress, no
+    //! crossing).
     std::vector<std::string> snapshot(double trackedAssetsEur,
                                       const std::tm &asOf) const;
 
@@ -153,8 +205,15 @@ public:
     //!                 sensitive; anything else is rejected)
     //!     updatedISO- YYYY-MM-DDTHH:MM:SS, a real local wall-clock time
     //!     note      - escaped text, max 512 chars, "-" for none
+    //! The goal line (kind "G", also active in this build; no trailer -
+    //! the progress lives in the snapshot, not the line):
+    //!   G;<id>;<label>;<targetEur>;<targetDate|->;<metric>
+    //!     targetEur  - decimal >= 0 (finite); 0 is legal but degenerate
+    //!     targetDate - YYYY-MM-DD (validated) or "-" for none
+    //!     metric     - "NET_WORTH" or "ASSETS" (case-sensitive; anything
+    //!                  else is rejected)
     //! The KIND PREFIX selects the collection; this build activates
-    //! "L" and "A". setLine is a validator-fronted UPSERT BY id: a
+    //! "L", "A" and "G". setLine is a validator-fronted UPSERT BY id: a
     //! rejected line (bad shape/text/number/date/category, or a kind this
     //! build does not activate) leaves the sheet completely untouched and
     //! returns false.
@@ -165,10 +224,10 @@ public:
     //! entry is unknown.
     bool deleteEntry(const std::string &kindId);
 
-    //! The current entry lines of [kind] ("L" and "A" now; other kinds
-    //! resolve to the empty list until their phase activates them), in
-    //! stored order, the trailing ;bal; value computed at [asOf] (assets
-    //! carry no trailer).
+    //! The current entry lines of [kind] ("L", "A" and "G" now; other
+    //! kinds resolve to the empty list until their phase activates
+    //! them), in stored order, the trailing ;bal; value computed at
+    //! [asOf] (assets and goals carry no trailer).
     std::vector<std::string> listLines(const std::string &kind, const std::tm &asOf) const;
 
     //! The full save-section text: every collection, one line per entry,
@@ -192,6 +251,10 @@ public:
     //! core-computed).
     static std::string lineOf(const Asset &a);
 
+    //! The line of one goal (no trailer - the progress is core-computed
+    //! in the snapshot, not the line).
+    static std::string lineOf(const Goal &g);
+
 private:
     //! The current liability as a line (the public single-entry form).
     static std::string liabilityLine(const Liability &l, const std::tm &asOf);
@@ -205,9 +268,15 @@ private:
     //! Parse + validate one asset (same contract for the "A" kind).
     static bool parseAssetLine(const std::string &line, std::string &outId,
                                Asset &out);
+    //! Parse + validate one goal (same contract for the "G" kind).
+    static bool parseGoalLine(const std::string &line, std::string &outId,
+                              Goal &out);
+    //! The current goal as a line (the single-entry form).
+    static std::string goalLine(const Goal &g);
 
     std::vector<Liability> liabilities_;
     std::vector<Asset> assets_;
+    std::vector<Goal> goals_;
 };
 
 // The line-format text helpers (the single escape rule, both directions).

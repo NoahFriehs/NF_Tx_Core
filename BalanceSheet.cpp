@@ -170,6 +170,20 @@ bool categoryFromToken(const std::string &token, AssetCategory &out) {
     return false;   // unknown token: the serde rejects it
 }
 
+const char *metricToken(GoalMetric m) {
+    switch (m) {
+        case GoalMetric::NetWorth: return "NET_WORTH";
+        case GoalMetric::Assets: return "ASSETS";
+    }
+    return "NET_WORTH";   // unreachable: the enum is closed
+}
+
+bool metricFromToken(const std::string &token, GoalMetric &out) {
+    if (token == "NET_WORTH") { out = GoalMetric::NetWorth; return true; }
+    if (token == "ASSETS") { out = GoalMetric::Assets; return true; }
+    return false;   // unknown token: the serde rejects it
+}
+
 // ----------------------------------------------------------------------------
 // Liability
 // ----------------------------------------------------------------------------
@@ -256,6 +270,34 @@ bool BalanceSheet::parseAssetLine(const std::string &line, std::string &outId,
     return true;
 }
 
+bool BalanceSheet::parseGoalLine(const std::string &line, std::string &outId,
+                                 Goal &out) {
+    const std::vector<std::string> f = SheetSerde::splitLine(line);
+    // Set form: kind + 5 fields (no trailer exists for goals - the
+    // progress lives in the snapshot, not the line).
+    if (f.size() != 6) return false;
+    if (f[0] != "G") return false;
+    outId = f[1];
+    if (!validId(outId)) return false;
+    const std::string &label = f[2];
+    if (!validLabel(label)) return false;
+    double target = 0.0;
+    if (!SheetSerde::parseDecimal(f[3], target) || target < 0.0) return false;
+
+    out = Goal();
+    out.id = outId;
+    out.label = label;
+    out.targetEur = target;
+    if (f[4] != "-") {
+        int y, m, d;
+        if (!SheetSerde::parseDate(f[4], y, m, d)) return false;
+        out.hasTargetDate = true;
+        out.targetDate = f[4];   // the validated form, stored verbatim
+    }
+    if (!metricFromToken(f[5], out.metric)) return false;   // the serde IS the validator
+    return true;
+}
+
 bool BalanceSheet::parseLiabilityLine(const std::string &line, std::string &outId,
                                       Liability &out) {
     const std::vector<std::string> f = SheetSerde::splitLine(line);
@@ -336,6 +378,22 @@ bool BalanceSheet::setLine(const std::string &line) {
         }
         return true;
     }
+    if (kind == "G") {
+        std::string id;
+        Goal goal;
+        if (!parseGoalLine(line, id, goal)) {
+            FileLog::w("BalanceSheet", "setLine rejected a goal line (shape/fields failed validation)");
+            return false;
+        }
+        auto it = std::find_if(goals_.begin(), goals_.end(),
+                               [&](const Goal &g) { return g.id == id; });
+        if (it != goals_.end()) {
+            *it = std::move(goal);   // upsert: replace in place, keep the position
+        } else {
+            goals_.push_back(std::move(goal));
+        }
+        return true;
+    }
     FileLog::w("BalanceSheet", "setLine rejected a line (kind not activated)");
     return false;
 }
@@ -355,6 +413,13 @@ bool BalanceSheet::deleteEntry(const std::string &kindId) {
                                [&](const Asset &a) { return a.id == id; });
         if (it == assets_.end()) return false;
         assets_.erase(it);
+        return true;
+    }
+    if (kindId[0] == 'G') {
+        auto it = std::find_if(goals_.begin(), goals_.end(),
+                               [&](const Goal &g) { return g.id == id; });
+        if (it == goals_.end()) return false;
+        goals_.erase(it);
         return true;
     }
     return false;
@@ -415,6 +480,24 @@ std::string BalanceSheet::lineOf(const Asset &a) {
     return assetLine(a);
 }
 
+std::string BalanceSheet::goalLine(const Goal &g) {
+    std::string line = "G;";
+    line += g.id;
+    line += ';';
+    line += SheetSerde::escapeField(g.label);
+    line += ';';
+    line += SheetSerde::formatDecimal(g.targetEur);
+    line += ';';
+    line += g.hasTargetDate ? g.targetDate : std::string("-");
+    line += ';';
+    line += metricToken(g.metric);
+    return line;
+}
+
+std::string BalanceSheet::lineOf(const Goal &g) {
+    return goalLine(g);
+}
+
 std::vector<std::string> BalanceSheet::listLines(const std::string &kind, const std::tm &asOf) const {
     std::vector<std::string> lines;
     if (kind == "L") {
@@ -423,6 +506,9 @@ std::vector<std::string> BalanceSheet::listLines(const std::string &kind, const 
     } else if (kind == "A") {
         lines.reserve(assets_.size());
         for (const auto &a: assets_) lines.push_back(assetLine(a));
+    } else if (kind == "G") {
+        lines.reserve(goals_.size());
+        for (const auto &g: goals_) lines.push_back(goalLine(g));
     }
     // other collections resolve empty until active
     return lines;
@@ -440,6 +526,10 @@ std::string BalanceSheet::serialize(const std::tm &asOf) const {
         if (!text.empty()) text += '\n';
         text += assetLine(a);
     }
+    for (const auto &g: goals_) {
+        if (!text.empty()) text += '\n';
+        text += goalLine(g);
+    }
     return text;
 }
 
@@ -447,6 +537,7 @@ size_t BalanceSheet::parse(const std::string &text) {
     size_t rejected = 0;
     std::vector<Liability> nextLiabilities;
     std::vector<Asset> nextAssets;
+    std::vector<Goal> nextGoals;
     if (!text.empty()) {
         std::size_t start = 0;
         while (start <= text.size()) {
@@ -476,6 +567,16 @@ size_t BalanceSheet::parse(const std::string &text) {
                     FileLog::e("BalanceSheet",
                                "Sheet section line rejected on load (skipped): " + line);
                 }
+            } else if (kind == "G") {
+                std::string id;
+                Goal goal;
+                if (parseGoalLine(line, id, goal)) {
+                    nextGoals.push_back(std::move(goal));
+                } else {
+                    ++rejected;
+                    FileLog::e("BalanceSheet",
+                               "Sheet section line rejected on load (skipped): " + line);
+                }
             } else {
                 ++rejected;
                 FileLog::e("BalanceSheet",
@@ -485,6 +586,7 @@ size_t BalanceSheet::parse(const std::string &text) {
     }
     liabilities_ = std::move(nextLiabilities);
     assets_ = std::move(nextAssets);
+    goals_ = std::move(nextGoals);
     return rejected;
 }
 
@@ -512,5 +614,36 @@ std::vector<std::string> BalanceSheet::snapshot(double trackedAssetsEur,
     line += SheetSerde::formatDecimal(liabilities);
     line += ';';
     line += SheetSerde::formatDecimalSigned(net);
-    return {line};
+    std::vector<std::string> lines;
+    lines.push_back(line);
+    // One GP line per goal, AFTER the NW line (kinds dispatch, positions
+    // are owned by the caller's iteration, never the index).
+    for (const auto &g: goals_) {
+        // The metric's value from the SAME pass - no recomputation:
+        // NET_WORTH reads the net field, ASSETS the tracked field.
+        const double current =
+                g.metric == GoalMetric::NetWorth ? net : trackedAssetsEur;
+        std::string goalLine = "GP;";
+        goalLine += g.id;
+        goalLine += ';';
+        goalLine += SheetSerde::formatDecimalSigned(current);
+        goalLine += ';';
+        goalLine += SheetSerde::formatDecimal(g.targetEur);
+        goalLine += ';';
+        if (g.targetEur > 0.0) {
+            const double progress = current / g.targetEur;
+            goalLine += SheetSerde::formatDecimalSigned(progress);
+            goalLine += ';';
+            // The crossing: progress >= 1. A degenerate target (<= 0)
+            // never crosses - the marker stands, the core never divides.
+            goalLine += progress >= 1.0 ? std::string("reached")
+                                        : std::string("-");
+        } else {
+            // progress marker + reached marker: no crossing on a
+            // degenerate target.
+            goalLine += "-;-";
+        }
+        lines.push_back(goalLine);
+    }
+    return lines;
 }

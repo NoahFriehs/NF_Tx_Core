@@ -1326,6 +1326,7 @@ static void testBalanceSheet() {
         // The section is generic over the collections: an asset line
         // rides the same text byte-exact through the save file.
         CHECK(sheet.setLine("A;as-1;House;REAL_ESTATE;350000;2026-11-15T10:00:00;-"));
+        CHECK(sheet.setLine("G;g-1;First house;500000;2032-06-30;ASSETS"));
         std::tm asof{};
         asof.tm_year = 2026 - 1900;
         asof.tm_mon = 0;
@@ -1366,6 +1367,9 @@ static void testBalanceSheet() {
         CHECK(loaded.getLiabilities()[0].label == "Mort;gage");
         CHECK(loaded.getAssets().size() == 1);
         CHECK(loaded.getAssets()[0].valueEur == 350000.0);
+        CHECK(loaded.getGoals().size() == 1);
+        CHECK(loaded.getGoals()[0].label == "First house");
+        CHECK(loaded.getGoals()[0].targetEur == 500000.0);
         CHECK(loaded.serialize(asof) == text);
     }
 
@@ -1468,6 +1472,21 @@ static void testBalanceSheet() {
         CHECK(getActiveModes() == 1);
         CHECK(sheetList("L").size() == 1);   // survived the whole sequence
 
+        // The goal collection rides the SAME C surface (no new names):
+        // set, list, the GP line in the snapshot, delete. The set+delete
+        // pair nets to nothing in the auto-saved store behind us.
+        CHECK(sheetSet("G;cg-1;Demo;1000;-;ASSETS"));
+        CHECK(sheetList("G").size() == 1);
+        {
+            const std::vector<std::string> gSnap = sheetSnapshot();
+            CHECK(gSnap.size() == 2);
+            // Cold core: no tracked value at all, zero progress, no
+            // crossing (0 < 1).
+            CHECK(gSnap[1] == "GP;cg-1;0;1000;0;-");
+        }
+        CHECK(sheetDelete("Gcg-1"));
+        CHECK(sheetList("G").empty());
+
         // The app's post-import save lands the v5 store: the import state
         // AND the sheet section (the holder injects it right before the
         // write, so the restore sequence above could not lose it).
@@ -1564,6 +1583,104 @@ static void testBalanceSheet() {
         const std::vector<std::string> negT = negTracked.snapshot(-44.05, asof);
         CHECK(negT.size() == 1);
         CHECK(negT[0] == "NW;-44.05;0;2500;-2544.05");
+    }
+
+    SECTION("goals: serde (the G line) + metric vocabulary");
+    {
+        BalanceSheet sheet;
+        std::tm asof{};
+        asof.tm_year = 2026 - 1900;
+        asof.tm_mon = 0;
+        asof.tm_mday = 15;
+        // The full valid shape: with/without date, an escaped label, and
+        // the degenerate target 0 (legal, the marker comes from the GP).
+        CHECK(sheet.setLine("G;g1;Bike;1000;-;ASSETS"));
+        CHECK(sheet.setLine("G;g2;First house;350000;2030-12-31;ASSETS"));
+        CHECK(sheet.setLine("G;g3;Mort;;gage free;1234560;2035-01-01;NET_WORTH"));
+        CHECK(sheet.setLine("G;g4;Open goal;0;-;NET_WORTH"));
+        auto lines = sheet.listLines("G", asof);
+        CHECK(lines.size() == 4);
+        CHECK(lines[0] == "G;g1;Bike;1000;-;ASSETS");
+        CHECK(lines[1] == "G;g2;First house;350000;2030-12-31;ASSETS");
+        CHECK(lines[2] == "G;g3;Mort;;gage free;1234560;2035-01-01;NET_WORTH");
+        CHECK(lines[3] == "G;g4;Open goal;0;-;NET_WORTH");
+        CHECK(sheet.getGoals()[2].label == "Mort;gage free");
+        CHECK(sheet.getGoals()[1].hasTargetDate);
+        CHECK(sheet.getGoals()[1].targetDate == "2030-12-31");
+        CHECK(!sheet.getGoals()[0].hasTargetDate);
+
+        // Upsert keeps the position; delete is kind-scoped; a second
+        // delete on the same id is false.
+        CHECK(sheet.setLine("G;g1;New bike;2000;2031-06-30;ASSETS"));
+        CHECK(sheet.listLines("G", asof).size() == 4);
+        CHECK(sheet.listLines("G", asof)[0] == "G;g1;New bike;2000;2031-06-30;ASSETS");
+        CHECK(sheet.deleteEntry("Gg3"));
+        CHECK(sheet.listLines("G", asof).size() == 3);
+        CHECK(!sheet.deleteEntry("Gg3"));
+
+        // The serde IS the validator: a rejected line leaves the sheet
+        // untouched (bad metric, negative target, impossible date, bad
+        // number, wrong field count).
+        const size_t before = sheet.getGoals().size();
+        CHECK(!sheet.setLine("G;g9;Bad metric;1000;-;CRYPTO"));
+        CHECK(!sheet.setLine("G;g9;Negative target;-5;-;ASSETS"));
+        CHECK(!sheet.setLine("G;g9;Bad date;1000;2026-1-01;ASSETS"));
+        CHECK(!sheet.setLine("G;g9;Impossible day;1000;2026-02-30;ASSETS"));
+        CHECK(!sheet.setLine("G;g9;Not a number;many;2035-01-01;ASSETS"));
+        CHECK(!sheet.setLine("G;g9;Too few;1000;ASSETS"));
+        CHECK(sheet.getGoals().size() == before);
+
+        // parse dispatch: a bad G line is rejected + counted, the good
+        // lines (all three kinds) still load.
+        BalanceSheet mixed;
+        const size_t rejected = mixed.parse(
+                "G;m1;Good;1000;-;ASSETS\n"
+                "G;m2;Bad metric;1000;-;NOPE\n"
+                "A;m3;Car;VEHICLE;100;2026-01-01T00:00:00;-\n"
+                "L;m4;Loan;100;0;2020-01-01;-;10");
+        CHECK(rejected == 1);
+        CHECK(mixed.getGoals().size() == 1);
+        CHECK(mixed.getAssets().size() == 1);
+        CHECK(mixed.getLiabilities().size() == 1);
+    }
+
+    SECTION("goals: the GP progress lines (hand fixtures)");
+    {
+        std::tm asof{};
+        asof.tm_year = 2026 - 1900;
+        asof.tm_mon = 0;
+        asof.tm_mday = 15;
+
+        // The same sheet shape as the NW fixture: one hand-computed
+        // annuity (n = 12: 100000*1.004^12 - 800*(1.004^12-1)/0.004 =
+        // 95092.97925), the injected tracked value 1234.56, so net =
+        // 1234.56 - 95092.97925 = -93858.41925 (SIGNED).
+        BalanceSheet sheet;
+        CHECK(sheet.setLine("L;gl-1;Mortgage;100000;4.8;2025-01-01;-;800"));
+        CHECK(sheet.setLine("G;p1;Bike;1000;-;ASSETS"));
+        CHECK(sheet.setLine("G;p2;Car fund;2500;-;ASSETS"));
+        CHECK(sheet.setLine("G;p3;Solvency;100000;-;NET_WORTH"));
+        CHECK(sheet.setLine("G;p4;Open goal;0;-;ASSETS"));
+
+        const std::vector<std::string> snap = sheet.snapshot(1234.56, asof);
+        CHECK(snap.size() == 5);   // the NW line + one GP line per goal
+        CHECK(snap[0] == "NW;1234.56;0;95092.97925;-93858.41925");
+        // 1. REACHED: 1234.56 / 1000 = 1.23456 >= 1.
+        CHECK(snap[1] == "GP;p1;1234.56;1000;1.23456;reached");
+        // 2. UNREACHED: 1234.56 / 2500 = 0.493824 (0 <= p < 1).
+        CHECK(snap[2] == "GP;p2;1234.56;2500;0.493824;-");
+        // 3. THE METRIC SELECTION on the same sheet: NET_WORTH reads the
+        //    net field (SIGNED), ASSETS read the tracked field above -
+        //    -93858.41925 / 100000 = -0.9385841925, no crossing.
+        CHECK(snap[3] == "GP;p3;-93858.41925;100000;-0.9385841925;-");
+        // 4. THE DEGENERATE target (0): the insufficient marker, the core
+        //    never divides, no crossing either.
+        CHECK(snap[4] == "GP;p4;1234.56;0;-;-");
+
+        // The GP lines come AFTER the NW line, in stored goal order -
+        // dispatch is on the kind prefix, never the index.
+        CHECK(snap[1].rfind("GP;", 0) == 0);
+        CHECK(snap[4].rfind("GP;p4;", 0) == 0);
     }
     std::filesystem::remove_all(dir);
 }
