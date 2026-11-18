@@ -1746,6 +1746,395 @@ static void testNetWorthSnapshot() {
     }
 }
 
+// ---------------------------------------------------------- alert tests ---
+//
+// The edge-triggered alert state machine (the latched crossing
+// automaton, core-owned): fixtures pin each semantic - the crossing up
+// and down, the latch (no re-fire), the re-arm by price swing, the
+// first-true-fires-once rule, the user-edit re-arm, the skipped symbol
+// no longer held, the goal swing (auto re-arm), the degenerate target,
+// the serde round trip, and the C surface with the auto-save latch
+// surviving an incarnation.
+//
+// The test lives at the END of main on purpose: it drives the
+// DataHolder singleton (the C surface) and leaves it in alert state -
+// no later test may depend on a particular sheet state.
+static void testAlerts() {
+    SECTION("alerts: serde (the AL line) + the GA latch line");
+    {
+        BalanceSheet sheet;
+        std::tm asof{};
+        asof.tm_year = 2026 - 1900;
+        asof.tm_mon = 2;
+        asof.tm_mday = 1;
+
+        // The full valid shape: unfired + fired (the stamp is part of
+        // the line), upsert keeps the position, delete is kind-scoped.
+        CHECK(sheet.setLine("AL;a1;BTC;ABOVE;60000;0;-"));
+        CHECK(sheet.setLine("AL;a2;ETH;BELOW;3000;1;2026-03-01T10:00:00"));
+        auto lines = sheet.listLines("AL", asof);
+        CHECK(lines.size() == 2);
+        CHECK(lines[0] == "AL;a1;BTC;ABOVE;60000;0;-");
+        CHECK(lines[1] == "AL;a2;ETH;BELOW;3000;1;2026-03-01T10:00:00");
+        CHECK(sheet.setLine("AL;a1;BTC;ABOVE;55000;0;-"));   // upsert = the user edit (re-arm)
+        CHECK(sheet.listLines("AL", asof)[0] == "AL;a1;BTC;ABOVE;55000;0;-");
+        CHECK(sheet.deleteEntry("ALa2"));
+        CHECK(sheet.listLines("AL", asof).size() == 1);
+        CHECK(!sheet.deleteEntry("ALa2"));
+
+        // The serde IS the validator (a rejected line leaves the sheet
+        // untouched): bad direction, bad symbol, negative / non-numeric
+        // threshold, field underflow, bad fired token, and the latch
+        // invariant BOTH ways (fired needs its stamp, unfired needs "-").
+        const size_t before = sheet.getPriceAlerts().size();
+        CHECK(!sheet.setLine("AL;a9;BTC;SIDEWAYS;1;0;-"));
+        CHECK(!sheet.setLine("AL;a9;B TC;ABOVE;1;0;-"));
+        CHECK(!sheet.setLine("AL;a9;;ABOVE;1;0;-"));
+        CHECK(!sheet.setLine("AL;a9;BTC;ABOVE;-1;0;-"));
+        CHECK(!sheet.setLine("AL;a9;BTC;ABOVE;many;0;-"));
+        CHECK(!sheet.setLine("AL;a9;BTC;ABOVE;1;0"));
+        CHECK(!sheet.setLine("AL;a9;BTC;ABOVE;1;2;-"));
+        CHECK(!sheet.setLine("AL;a9;BTC;ABOVE;1;1;-"));
+        CHECK(!sheet.setLine("AL;a9;BTC;ABOVE;1;0;not-a-stamp"));
+        CHECK(sheet.getPriceAlerts().size() == before);
+
+        // The GA line is core-owned state: setLine rejects it (the user
+        // cannot edit latches directly), serialize/parse round-trip it.
+        CHECK(!sheet.setLine("GA;g1;1;2026-03-01T10:00:00"));
+        CHECK(sheet.setLine("G;g1;Fund;100;-;ASSETS"));
+        CHECK(sheet.setLine("AL;a3;BTC;ABOVE;1;0;-"));
+        {
+            std::map<std::string, double> held{{"BTC", 150.0}};
+            auto current = [&](const std::string &s, double &p) {
+                auto it = held.find(s);
+                if (it == held.end()) return false;
+                p = it->second;
+                return true;
+            };
+            bool changed = false;
+            const auto fired = sheet.alertCheck(150.0, current, asof, changed);
+            CHECK(fired.size() == 2);   // the alert (150 > 1) + the goal (150 >= 100)
+            CHECK(fired[0] == "FIRED;PRICE;a3;BTC;ABOVE;1;150");
+            CHECK(fired[1] == "FIRED;GOAL;g1;Fund;ASSETS;150;100");
+            CHECK(changed);
+        }
+        CHECK(sheet.listLines("AL", asof)[1] ==
+              "AL;a3;BTC;ABOVE;1;1;2026-03-01T00:00:00");
+        {
+            // The fired state persists as lines: the AL latch in place,
+            // the goal latch as the GA line (the asOf of the firing pass).
+            const std::string text = sheet.serialize(asof);
+            CHECK(text.find("GA;g1;1;2026-03-01T00:00:00") != std::string::npos);
+            BalanceSheet back;
+            CHECK(back.parse(text) == 0);
+            CHECK(back.getPriceAlerts().size() == 2);
+            CHECK(back.getPriceAlerts()[1].fired);
+            CHECK(back.getPriceAlerts()[1].firedIso == "2026-03-01T00:00:00");
+            CHECK(back.getGoalLatches().size() == 1);
+            CHECK(back.getGoalLatches().at("g1").firedIso == "2026-03-01T00:00:00");
+        }
+        // The disarm drops the GA line (only the FIRED state is
+        // represented; absence = disarmed).
+        {
+            auto noPrice = [](const std::string &, double &) { return false; };
+            bool changed = false;
+            const auto fired = sheet.alertCheck(50.0, noPrice, asof, changed);
+            CHECK(fired.empty());
+            CHECK(changed);   // the goal disarm (50 < 100)
+            CHECK(sheet.getGoalLatches().empty());
+            CHECK(sheet.serialize(asof).find("GA;") == std::string::npos);
+        }
+        // An orphan GA line (a hand-edited store) is pruned by the next
+        // check and counts as a state change.
+        {
+            BalanceSheet orphan;
+            CHECK(orphan.parse("GA;ghost;1;2026-03-01T00:00:00") == 0);
+            CHECK(orphan.getGoalLatches().count("ghost") == 1);
+            auto noPrice = [](const std::string &, double &) { return false; };
+            bool changed = false;
+            const auto fired = orphan.alertCheck(0.0, noPrice, asof, changed);
+            CHECK(fired.empty());
+            CHECK(changed);
+            CHECK(orphan.getGoalLatches().empty());
+        }
+    }
+
+    SECTION("alerts: the latched crossing automaton (hand fixtures)");
+    {
+        std::tm asof{};
+        asof.tm_year = 2026 - 1900;
+        asof.tm_mon = 2;
+        asof.tm_mday = 2;
+        asof.tm_hour = 10;
+        asof.tm_min = 30;
+        asof.tm_sec = 0;
+        const std::string iso = "2026-03-02T10:30:00";
+
+        // 1. THE CROSSING UP + the latch: no fire below the threshold,
+        //    one fire on the crossing, silence afterwards (the latch).
+        {
+            BalanceSheet sheet;
+            CHECK(sheet.setLine("AL;p1;BTC;ABOVE;100;0;-"));
+            std::map<std::string, double> prices{{"BTC", 90.0}};
+            auto current = [&](const std::string &s, double &p) {
+                auto it = prices.find(s);
+                if (it == prices.end()) return false;
+                p = it->second;
+                return true;
+            };
+            bool changed = true;
+            CHECK(sheet.alertCheck(0.0, current, asof, changed).empty());
+            CHECK(!changed);
+            CHECK(sheet.listLines("AL", asof)[0] == "AL;p1;BTC;ABOVE;100;0;-");
+            prices["BTC"] = 120.0;
+            changed = false;
+            auto fired = sheet.alertCheck(0.0, current, asof, changed);
+            CHECK(fired.size() == 1);
+            CHECK(fired[0] == "FIRED;PRICE;p1;BTC;ABOVE;100;120");
+            CHECK(changed);
+            CHECK(sheet.listLines("AL", asof)[0] == "AL;p1;BTC;ABOVE;100;1;" + iso);
+            fired = sheet.alertCheck(0.0, current, asof, changed);
+            CHECK(fired.empty());   // latched: the level stays true, no re-fire
+            CHECK(!changed);
+        }
+
+        // 2. THE CROSSING DOWN + the boundary: sitting exactly ON the
+        //    threshold is neither above nor below - here it disarms.
+        {
+            BalanceSheet sheet;
+            CHECK(sheet.setLine("AL;p2;ETH;BELOW;200;0;-"));
+            std::map<std::string, double> prices{{"ETH", 220.0}};
+            auto current = [&](const std::string &s, double &p) {
+                auto it = prices.find(s);
+                if (it == prices.end()) return false;
+                p = it->second;
+                return true;
+            };
+            bool changed = true;
+            CHECK(sheet.alertCheck(0.0, current, asof, changed).empty());
+            prices["ETH"] = 180.0;
+            auto fired = sheet.alertCheck(0.0, current, asof, changed);
+            CHECK(fired.size() == 1);
+            CHECK(fired[0] == "FIRED;PRICE;p2;ETH;BELOW;200;180");
+            prices["ETH"] = 200.0;
+            changed = false;
+            fired = sheet.alertCheck(0.0, current, asof, changed);
+            CHECK(fired.empty());
+            CHECK(changed);   // 200 is not < 200: the 180 latch disarms
+            CHECK(sheet.listLines("AL", asof)[0] == "AL;p2;ETH;BELOW;200;0;-");
+        }
+
+        // 3. RE-ARM by price swing: the fired alert disarms on the way
+        //    out and fires AGAIN (a fresh stamp) on the way back in.
+        {
+            BalanceSheet sheet;
+            CHECK(sheet.setLine("AL;p1;BTC;ABOVE;100;1;2026-03-01T00:00:00"));
+            std::map<std::string, double> prices{{"BTC", 90.0}};
+            auto current = [&](const std::string &s, double &p) {
+                auto it = prices.find(s);
+                if (it == prices.end()) return false;
+                p = it->second;
+                return true;
+            };
+            bool changed = false;
+            CHECK(sheet.alertCheck(0.0, current, asof, changed).empty());
+            CHECK(changed);   // the disarm
+            CHECK(sheet.listLines("AL", asof)[0] == "AL;p1;BTC;ABOVE;100;0;-");
+            std::tm asof2{};
+            asof2.tm_year = 2026 - 1900;
+            asof2.tm_mon = 2;
+            asof2.tm_mday = 2;
+            asof2.tm_hour = 11;
+            prices["BTC"] = 130.0;
+            changed = false;
+            auto fired = sheet.alertCheck(0.0, current, asof2, changed);
+            CHECK(fired.size() == 1);
+            CHECK(fired[0] == "FIRED;PRICE;p1;BTC;ABOVE;100;130");
+            CHECK(changed);
+            CHECK(sheet.listLines("AL", asof)[0] == "AL;p1;BTC;ABOVE;100;1;2026-03-02T11:00:00");
+        }
+
+        // 4. FIRST-TRUE FIRES ONCE: an alert whose condition is already
+        //    true at creation fires on the very first pass (the
+        //    latched first-true rule - the rejected crossings-only
+        //    alternative would never fire it).
+        {
+            BalanceSheet sheet;
+            CHECK(sheet.setLine("AL;p3;BTC;ABOVE;50;0;-"));   // created at 120 > 50
+            std::map<std::string, double> prices{{"BTC", 120.0}};
+            auto current = [&](const std::string &s, double &p) {
+                auto it = prices.find(s);
+                if (it == prices.end()) return false;
+                p = it->second;
+                return true;
+            };
+            bool changed = false;
+            auto fired = sheet.alertCheck(0.0, current, asof, changed);
+            CHECK(fired.size() == 1);
+            CHECK(fired[0] == "FIRED;PRICE;p3;BTC;ABOVE;50;120");
+            CHECK(changed);
+            CHECK(sheet.alertCheck(0.0, current, asof, changed).empty());
+        }
+
+        // 5. THE USER-EDIT RESET: a fired alert re-built by the UI with
+        //    fired = 0 re-arms deliberately and fires again on the next
+        //    pass (the condition still true).
+        {
+            BalanceSheet sheet;
+            CHECK(sheet.setLine("AL;p4;ETH;BELOW;200;1;2026-03-01T09:00:00"));
+            std::map<std::string, double> prices{{"ETH", 180.0}};
+            auto current = [&](const std::string &s, double &p) {
+                auto it = prices.find(s);
+                if (it == prices.end()) return false;
+                p = it->second;
+                return true;
+            };
+            bool changed = false;
+            CHECK(sheet.alertCheck(0.0, current, asof, changed).empty());   // latched
+            CHECK(!changed);
+            CHECK(sheet.setLine("AL;p4;ETH;BELOW;200;0;-"));   // the edit re-arms
+            auto fired = sheet.alertCheck(0.0, current, asof, changed);
+            CHECK(fired.size() == 1);
+            CHECK(fired[0] == "FIRED;PRICE;p4;ETH;BELOW;200;180");
+            CHECK(changed);
+        }
+
+        // 6. THE SYMBOL NO LONGER HELD: no current price -> skipped
+        //    ENTIRELY (neither fire nor disarm, the state is untouched -
+        //    no zombie notifications, no invented "last price").
+        {
+            BalanceSheet sheet;
+            CHECK(sheet.setLine("AL;p5;XRP;ABOVE;1;1;2026-03-01T00:00:00"));
+            auto noPrice = [](const std::string &, double &) { return false; };
+            bool changed = true;
+            CHECK(sheet.alertCheck(0.0, noPrice, asof, changed).empty());
+            CHECK(!changed);
+            CHECK(sheet.listLines("AL", asof)[0] == "AL;p5;XRP;ABOVE;1;1;2026-03-01T00:00:00");
+        }
+
+        // 7. THE GOAL ACHIEVED: the snapshot's GP condition on the goal
+        //    metric - fires once at 100 %+, re-arms automatically when
+        //    the progress drops below 1 (a goal can swing), fires again
+        //    on the way back up. No user edit is involved.
+        {
+            BalanceSheet sheet;
+            CHECK(sheet.setLine("G;g1;Fund;100;-;ASSETS"));
+            auto noPrice = [](const std::string &, double &) { return false; };
+            bool changed = false;
+            auto fired = sheet.alertCheck(150.0, noPrice, asof, changed);   // 150% progress
+            CHECK(fired.size() == 1);
+            CHECK(fired[0] == "FIRED;GOAL;g1;Fund;ASSETS;150;100");
+            CHECK(changed);
+            CHECK(sheet.alertCheck(150.0, noPrice, asof, changed).empty());   // latched
+            changed = false;
+            CHECK(sheet.alertCheck(90.0, noPrice, asof, changed).empty());    // 90%: the auto re-arm
+            CHECK(changed);
+            CHECK(sheet.getGoalLatches().empty());
+            fired = sheet.alertCheck(120.0, noPrice, asof, changed);         // 120% again
+            CHECK(fired.size() == 1);
+            CHECK(fired[0] == "FIRED;GOAL;g1;Fund;ASSETS;120;100");
+            CHECK(changed);
+        }
+
+        // 8. THE DEGENERATE GOAL: a zero target has no crossing and no
+        //    latch (the core never divides by it, GP marker aside).
+        {
+            BalanceSheet sheet;
+            CHECK(sheet.setLine("G;g2;None;0;-;ASSETS"));
+            auto noPrice = [](const std::string &, double &) { return false; };
+            bool changed = true;
+            CHECK(sheet.alertCheck(150.0, noPrice, asof, changed).empty());
+            CHECK(!changed);
+            CHECK(sheet.getGoalLatches().empty());
+        }
+
+        // 9. DELETING A GOAL REMOVES ITS LATCH (no orphan state).
+        {
+            BalanceSheet sheet;
+            CHECK(sheet.setLine("G;g1;Fund;100;-;ASSETS"));
+            auto noPrice = [](const std::string &, double &) { return false; };
+            bool changed = false;
+            CHECK(sheet.alertCheck(150.0, noPrice, asof, changed).size() == 1);
+            CHECK(sheet.deleteEntry("Gg1"));
+            CHECK(sheet.getGoalLatches().empty());
+        }
+    }
+    SECTION("alerts: the C surface + the latch persists across incarnations");
+    {
+        const std::string saveDir =
+                (std::filesystem::temp_directory_path() / "nf_tx_core_tests_alerts")
+                        .string() +
+                "/";
+        std::filesystem::remove_all(saveDir);
+        std::filesystem::create_directories(saveDir);
+
+        DataHolder &dh = DataHolder::GetInstance();
+        std::vector<std::string> data{
+                CDC_HEADER,
+                cdcLine("2026-03-01 09:00:00", "BTC", "1", "100", "crypto_purchase", "buy"),
+        };
+        CHECK(initWithData(data, Mode::CDC, "tests.log", 0));
+        CHECK(dh.isInitialized());
+        CHECK(save(saveDir));   // establishes the store location for the auto-save
+
+        CHECK(sheetSet("AL;c1;BTC;ABOVE;500;0;-"));
+        // The same price push as the app's path: the current cache
+        // values in getCurrencies() order (EUR pinned to 1.0, like the
+        // in-app price pass does).
+        auto pushBtc = [](double price) {
+            const auto curs = getCurrencies();
+            std::vector<double> prices(curs.size(), 0.0);
+            for (size_t i = 0; i < curs.size(); i++) {
+                if (curs[i] == "BTC") prices[i] = price;
+                if (curs[i] == "EUR") prices[i] = 1.0;
+            }
+            setPrice(prices);
+        };
+        pushBtc(600.0);
+        auto fired = alertCheck();
+        CHECK(fired.size() == 1);
+        CHECK(fired[0].rfind("FIRED;PRICE;c1;BTC;ABOVE;500;600", 0) == 0);
+
+        // The latch flipped: the core's own auto-save persisted it. A
+        // fresh incarnation (the next app process's restore) sees the
+        // fired state and does NOT re-fire at the same price.
+        dh.SetTransactionManager(std::make_unique<TransactionManager>());
+        dh.loadData(saveDir);
+        CHECK(sheetList("AL").size() == 1);
+        CHECK(sheetList("AL")[0].rfind("AL;c1;BTC;ABOVE;500;1;", 0) == 0);
+        pushBtc(600.0);
+        CHECK(alertCheck().empty());
+
+        // Edge, not level: the price drops below the threshold (the
+        // disarm persists too), then rises again - the second fire.
+        pushBtc(400.0);
+        CHECK(alertCheck().empty());
+        CHECK(sheetList("AL")[0] == "AL;c1;BTC;ABOVE;500;0;-");
+        pushBtc(650.0);
+        auto again = alertCheck();
+        CHECK(again.size() == 1);
+        CHECK(again[0].rfind("FIRED;PRICE;c1;BTC;ABOVE;500;650", 0) == 0);
+        CHECK(sheetList("AL")[0].rfind("AL;c1;BTC;ABOVE;500;1;", 0) == 0);
+
+        // The goal-achieved rides the SAME pass: the GP condition on
+        // the live tracked value (1 BTC at 650 + 100 EUR buffer).
+        CHECK(sheetSet("G;c2;Milestone;1;-;NET_WORTH"));
+        auto goalFired = alertCheck();
+        CHECK(goalFired.size() == 1);
+        CHECK(goalFired[0].rfind("FIRED;GOAL;c2;Milestone;NET_WORTH;", 0) == 0);
+        CHECK(alertCheck().empty());   // the goal latch
+
+        // No zombie notifications: an alert on a symbol the core no
+        // longer holds (this state holds BTC + the EUR buffer only) is
+        // skipped, not fired and not disarmed.
+        CHECK(sheetSet("AL;c3;DOGE;ABOVE;1;0;-"));
+        CHECK(alertCheck().empty());
+        CHECK(sheetList("AL").back().rfind("AL;c3;DOGE;ABOVE;1;0;", 0) == 0);
+
+        std::filesystem::remove_all(saveDir);
+    }
+}
+
 static void testBlockPitParser() {
     SECTION("BlockPit header detection");
     {
@@ -3834,6 +4223,7 @@ int main() {
     testMultiFileAppend();
     testCsvExport();
     testDlsymSurfaceLinkage();
+    testAlerts();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,
                 g_failures == 1 ? "" : "s");

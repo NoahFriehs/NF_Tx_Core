@@ -102,3 +102,25 @@ std::string DataHolder::exportCsv() {
     return CsvExport::buildCsvFile(*transactionManager, sheet_,
                                    SheetSerde::todayWallClock());
 }
+
+std::vector<std::string> DataHolder::alertCheck() {
+    std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
+    if (!transactionManager) return {};
+    bool stateChanged = false;
+    const std::vector<std::string> firedLines = sheet_.alertCheck(
+            transactionManager->getTotalValueOfAssetsIncludingBuffer(),
+            // The current-price lookup the automaton consumes: same
+            // hierarchy as the valuation, held-scope only (a symbol the
+            // core no longer holds has no price; the check must not
+            // invent one).
+            [&](const std::string &symbol, double &price) {
+                return transactionManager->currentPrice(symbol, price);
+            },
+            SheetSerde::todayWallClock(), stateChanged);
+    if (stateChanged) {
+        // A crossing (fire or disarm) is sheet state: persist it at
+        // the worker cadence (the atomic write already exists).
+        sheetAutoSave();
+    }
+    return firedLines;
+}

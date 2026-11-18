@@ -391,6 +391,10 @@ std::string exportCsv() {
     return DataHolder::GetInstance().exportCsv();
 }
 
+std::vector<std::string> alertCheck() {
+    return DataHolder::GetInstance().alertCheck();
+}
+
 // The cut result is per-thread state on TransactionManager itself - no live
 // manager is needed, so these are safe to call before any init (they report
 // the not-cut defaults then).
@@ -1013,6 +1017,18 @@ Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_exportCsv(
         return env->NewStringUTF(file.c_str());
     } catch (const std::exception &e) {
         FileLog::e("library", "JNI exportCsv failed: " + std::string(e.what()));
+        return nullptr;
+    }
+}
+
+extern "C"
+JNIEXPORT jobjectArray JNICALL
+Java_at_msd_friehs_1bicha_cdcsvparser_core_CoreService_00024Companion_alertCheck(
+        JNIEnv *env, jclass) {
+    try {
+        return stringsToJArray(env, alertCheck());
+    } catch (const std::exception &e) {
+        FileLog::e("library", "JNI alertCheck failed: " + std::string(e.what()));
         return nullptr;
     }
 }

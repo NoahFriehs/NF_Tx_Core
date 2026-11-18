@@ -184,6 +184,20 @@ bool metricFromToken(const std::string &token, GoalMetric &out) {
     return false;   // unknown token: the serde rejects it
 }
 
+const char *directionToken(AlertDirection d) {
+    switch (d) {
+        case AlertDirection::Above: return "ABOVE";
+        case AlertDirection::Below: return "BELOW";
+    }
+    return "ABOVE";   // unreachable: the enum is closed
+}
+
+bool directionFromToken(const std::string &token, AlertDirection &out) {
+    if (token == "ABOVE") { out = AlertDirection::Above; return true; }
+    if (token == "BELOW") { out = AlertDirection::Below; return true; }
+    return false;   // unknown token: the serde rejects it
+}
+
 // ----------------------------------------------------------------------------
 // Liability
 // ----------------------------------------------------------------------------
@@ -225,6 +239,7 @@ namespace {
 
 constexpr size_t kMaxIdLength = 64;
 constexpr size_t kMaxLabelLength = 512;
+constexpr size_t kMaxSymbolLength = 16;
 
 bool validId(const std::string &id) {
     if (id.empty() || id.size() > kMaxIdLength) return false;
@@ -295,6 +310,66 @@ bool BalanceSheet::parseGoalLine(const std::string &line, std::string &outId,
         out.targetDate = f[4];   // the validated form, stored verbatim
     }
     if (!metricFromToken(f[5], out.metric)) return false;   // the serde IS the validator
+    return true;
+}
+
+bool BalanceSheet::parseAlertLine(const std::string &line, std::string &outId,
+                                  PriceAlert &out) {
+    const std::vector<std::string> f = SheetSerde::splitLine(line);
+    // Set form: kind + 6 fields.
+    if (f.size() != 7) return false;
+    if (f[0] != "AL") return false;
+    outId = f[1];
+    if (!validId(outId)) return false;
+    const std::string &symbol = f[2];
+    if (symbol.empty() || symbol.size() > kMaxSymbolLength) return false;
+    for (char c: symbol) {
+        if (!std::isalnum(static_cast<unsigned char>(c))) return false;
+    }
+    AlertDirection direction;
+    if (!directionFromToken(f[3], direction)) return false;   // the serde IS the validator
+    double threshold = 0.0;
+    if (!SheetSerde::parseDecimal(f[4], threshold) || threshold < 0.0) return false;
+    bool fired;
+    if (f[5] == "1") {
+        fired = true;
+    } else if (f[5] == "0") {
+        fired = false;
+    } else {
+        return false;
+    }
+    // The latch invariant in BOTH directions: a fired alert carries its
+    // stamp, an unfired one carries "-" (no half-states on the line).
+    if (fired) {
+        int y, m, d, h, mi, s;
+        if (!SheetSerde::parseTimestamp(f[6], y, m, d, h, mi, s)) return false;
+    } else if (f[6] != "-") {
+        return false;
+    }
+
+    out = PriceAlert();
+    out.id = outId;
+    out.symbol = symbol;
+    out.direction = direction;
+    out.thresholdEur = threshold;
+    out.fired = fired;
+    out.firedIso = fired ? f[6] : std::string();
+    return true;
+}
+
+bool BalanceSheet::parseGoalLatchLine(const std::string &line, std::string &outGoalId,
+                                      std::string &outFiredIso) {
+    const std::vector<std::string> f = SheetSerde::splitLine(line);
+    // The latch line exists ONLY while latched: kind + goal id + "1" +
+    // the strict fired stamp (see goalLatchLine).
+    if (f.size() != 4) return false;
+    if (f[0] != "GA") return false;
+    outGoalId = f[1];
+    if (!validId(outGoalId)) return false;
+    if (f[2] != "1") return false;
+    int y, m, d, h, mi, s;
+    if (!SheetSerde::parseTimestamp(f[3], y, m, d, h, mi, s)) return false;
+    outFiredIso = f[3];   // the validated form, stored verbatim
     return true;
 }
 
@@ -394,12 +469,42 @@ bool BalanceSheet::setLine(const std::string &line) {
         }
         return true;
     }
+    if (kind == "AL") {
+        std::string id;
+        PriceAlert alert;
+        if (!parseAlertLine(line, id, alert)) {
+            FileLog::w("BalanceSheet", "setLine rejected an alert line (shape/fields failed validation)");
+            return false;
+        }
+        auto it = std::find_if(priceAlerts_.begin(), priceAlerts_.end(),
+                               [&](const PriceAlert &a) { return a.id == id; });
+        if (it != priceAlerts_.end()) {
+            *it = std::move(alert);   // upsert: replace in place, keep the position (an edit re-arms: the UI builds fired = false)
+        } else {
+            priceAlerts_.push_back(std::move(alert));
+        }
+        return true;
+    }
+    // The "GA" kind is core-owned alert state: never user-editable (the
+    // automaton is the single writer of a goal latch). Any other kind:
+    // inactive.
     FileLog::w("BalanceSheet", "setLine rejected a line (kind not activated)");
     return false;
 }
 
 bool BalanceSheet::deleteEntry(const std::string &kindId) {
     if (kindId.empty()) return false;
+    // "AL" is a two-char kind: it dispatches BEFORE the single-char
+    // "A" (asset) branch (kindId = kind prefix + id, id is app-
+    // generated and never starts with the other kind's prefix).
+    if (kindId.size() > 2 && kindId[0] == 'A' && kindId[1] == 'L') {
+        const std::string alertId = kindId.substr(2);
+        auto it = std::find_if(priceAlerts_.begin(), priceAlerts_.end(),
+                               [&](const PriceAlert &a) { return a.id == alertId; });
+        if (it == priceAlerts_.end()) return false;
+        priceAlerts_.erase(it);
+        return true;
+    }
     const std::string id = kindId.substr(1);
     if (kindId[0] == 'L') {
         auto it = std::find_if(liabilities_.begin(), liabilities_.end(),
@@ -420,6 +525,7 @@ bool BalanceSheet::deleteEntry(const std::string &kindId) {
                                [&](const Goal &g) { return g.id == id; });
         if (it == goals_.end()) return false;
         goals_.erase(it);
+        goalLatches_.erase(id);   // the goal is gone: its latch is too
         return true;
     }
     return false;
@@ -480,6 +586,27 @@ std::string BalanceSheet::lineOf(const Asset &a) {
     return assetLine(a);
 }
 
+std::string BalanceSheet::alertLine(const PriceAlert &a) {
+    std::string line = "AL;";
+    line += a.id;
+    line += ';';
+    line += a.symbol;
+    line += ';';
+    line += directionToken(a.direction);
+    line += ';';
+    line += SheetSerde::formatDecimal(a.thresholdEur);
+    line += ';';
+    line += a.fired ? std::string("1") : std::string("0");
+    line += ';';
+    line += a.firedIso.empty() ? std::string("-") : a.firedIso;
+    return line;
+}
+
+std::string BalanceSheet::goalLatchLine(const std::string &goalId,
+                                        const std::string &firedIso) {
+    return "GA;" + goalId + ";1;" + firedIso;
+}
+
 std::string BalanceSheet::goalLine(const Goal &g) {
     std::string line = "G;";
     line += g.id;
@@ -509,6 +636,9 @@ std::vector<std::string> BalanceSheet::listLines(const std::string &kind, const 
     } else if (kind == "G") {
         lines.reserve(goals_.size());
         for (const auto &g: goals_) lines.push_back(goalLine(g));
+    } else if (kind == "AL") {
+        lines.reserve(priceAlerts_.size());
+        for (const auto &a: priceAlerts_) lines.push_back(alertLine(a));
     }
     // other collections resolve empty until active
     return lines;
@@ -530,14 +660,43 @@ std::string BalanceSheet::serialize(const std::tm &asOf) const {
         if (!text.empty()) text += '\n';
         text += goalLine(g);
     }
+    for (const auto &a: priceAlerts_) {
+        if (!text.empty()) text += '\n';
+        text += alertLine(a);
+    }
+    // The goal latches: emitted ONLY while latched (the fired state is
+    // the only non-default state; absence = disarmed).
+    for (const auto &entry: goalLatches_) {
+        if (!text.empty()) text += '\n';
+        text += goalLatchLine(entry.first, entry.second.firedIso);
+    }
     return text;
 }
+
+namespace {
+
+//! Upsert [line] into [out] by [id] (the alert collection is a vector;
+//! the load path keeps the first-seen order and replaces in place).
+void upsertAlertById(std::vector<PriceAlert> *out, const std::string &id,
+                      const PriceAlert &alert) {
+    for (auto &a: *out) {
+        if (a.id == id) {
+            a = alert;
+            return;
+        }
+    }
+    out->push_back(alert);
+}
+
+} // namespace
 
 size_t BalanceSheet::parse(const std::string &text) {
     size_t rejected = 0;
     std::vector<Liability> nextLiabilities;
     std::vector<Asset> nextAssets;
     std::vector<Goal> nextGoals;
+    std::vector<PriceAlert> nextAlerts;
+    std::map<std::string, GoalLatch> nextLatches;
     if (!text.empty()) {
         std::size_t start = 0;
         while (start <= text.size()) {
@@ -577,6 +736,29 @@ size_t BalanceSheet::parse(const std::string &text) {
                     FileLog::e("BalanceSheet",
                                "Sheet section line rejected on load (skipped): " + line);
                 }
+            } else if (kind == "AL") {
+                std::string id;
+                PriceAlert alert;
+                if (parseAlertLine(line, id, alert)) {
+                    upsertAlertById(&nextAlerts, id, alert);
+                } else {
+                    ++rejected;
+                    FileLog::e("BalanceSheet",
+                               "Sheet section line rejected on load (skipped): " + line);
+                }
+            } else if (kind == "GA") {
+                std::string goalId;
+                std::string firedIso;
+                if (parseGoalLatchLine(line, goalId, firedIso)) {
+                    GoalLatch latch;
+                    latch.fired = true;
+                    latch.firedIso = firedIso;
+                    nextLatches[goalId] = latch;
+                } else {
+                    ++rejected;
+                    FileLog::e("BalanceSheet",
+                               "Sheet section line rejected on load (skipped): " + line);
+                }
             } else {
                 ++rejected;
                 FileLog::e("BalanceSheet",
@@ -587,6 +769,8 @@ size_t BalanceSheet::parse(const std::string &text) {
     liabilities_ = std::move(nextLiabilities);
     assets_ = std::move(nextAssets);
     goals_ = std::move(nextGoals);
+    priceAlerts_ = std::move(nextAlerts);
+    goalLatches_ = std::move(nextLatches);
     return rejected;
 }
 
@@ -594,6 +778,112 @@ double BalanceSheet::assetsTotal() const {
     double total = 0.0;
     for (const auto &a: assets_) total += a.valueEur;
     return total;
+}
+
+std::vector<std::string> BalanceSheet::alertCheck(
+        double trackedAssetsEur,
+        const std::function<bool(const std::string &, double &)> &currentPrice,
+        const std::tm &asOf, bool &stateChangedOut) {
+    stateChangedOut = false;
+    std::vector<std::string> fired;
+    const std::string firedIso = SheetSerde::formatTimestamp(
+            asOf.tm_year + 1900, asOf.tm_mon + 1, asOf.tm_mday,
+            asOf.tm_hour, asOf.tm_min, asOf.tm_sec);
+
+    // -- The price alerts: the latched crossing automaton
+    for (auto &alert: priceAlerts_) {
+        double price;
+        // A symbol the core no longer holds has NO current price: skip
+        // the alert ENTIRELY (untouched - no fire, no disarm, no
+        // invented "last price"); the user deletes such an alert.
+        if (!currentPrice(alert.symbol, price)) continue;
+        // Strict comparisons: sitting exactly ON the threshold is
+        // neither above nor below (no fire, no disarm).
+        const bool cond = alert.direction == AlertDirection::Above
+                                     ? price > alert.thresholdEur
+                                     : price < alert.thresholdEur;
+        if (!cond) {
+            if (alert.fired) {
+                // The disarm is STATE, too (it persists, so the next
+                // re-crossing fires exactly once more).
+                alert.fired = false;
+                alert.firedIso.clear();
+                stateChangedOut = true;
+            }
+        } else if (!alert.fired) {
+            alert.fired = true;
+            alert.firedIso = firedIso;
+            stateChangedOut = true;
+            std::string line = "FIRED;PRICE;";
+            line += alert.id;
+            line += ';';
+            line += alert.symbol;
+            line += ';';
+            line += directionToken(alert.direction);
+            line += ';';
+            line += SheetSerde::formatDecimal(alert.thresholdEur);
+            line += ';';
+            line += SheetSerde::formatDecimal(price);
+            fired.push_back(std::move(line));
+        }
+    }
+
+    // -- The goal-achieved: the snapshot's GP condition over the SAME
+    //    values (never a recomputation)
+    const double nonFinancial = assetsTotal();
+    double liabilitySum = 0.0;
+    for (const auto &l: liabilities_) liabilitySum += l.balanceAsOf(asOf);
+    const double net = trackedAssetsEur + nonFinancial - liabilitySum;
+    for (const auto &goal: goals_) {
+        const double current =
+                goal.metric == GoalMetric::NetWorth ? net : trackedAssetsEur;
+        // The crossing: progress >= 1 <=> current >= target with a
+        // non-degenerate target (the core never divides, and a
+        // degenerate target has no crossing and no latch).
+        const bool cond = goal.targetEur > 0.0 && current >= goal.targetEur;
+        auto it = goalLatches_.find(goal.id);
+        if (!cond) {
+            // A goal can swing: dropping below the target re-arms the
+            // latch automatically (no user edit needed).
+            if (it != goalLatches_.end()) {
+                goalLatches_.erase(it);
+                stateChangedOut = true;
+            }
+        } else if (it == goalLatches_.end()) {
+            GoalLatch latch;
+            latch.fired = true;
+            latch.firedIso = firedIso;
+            goalLatches_.emplace(goal.id, latch);
+            stateChangedOut = true;
+            std::string line = "FIRED;GOAL;";
+            line += goal.id;
+            line += ';';
+            line += SheetSerde::escapeField(goal.label);
+            line += ';';
+            line += metricToken(goal.metric);
+            line += ';';
+            line += SheetSerde::formatDecimalSigned(current);
+            line += ';';
+            line += SheetSerde::formatDecimal(goal.targetEur);
+            fired.push_back(std::move(line));
+        }
+        // else: latched and still true - silent (the latch is state).
+    }
+
+    // Defensively prune latches of goals that no longer exist (an
+    // orphan GA line can only come from a hand-edited store).
+    for (auto lt = goalLatches_.begin(); lt != goalLatches_.end();) {
+        const bool goalExists = std::any_of(
+                goals_.begin(), goals_.end(),
+                [&](const Goal &g) { return g.id == lt->first; });
+        if (!goalExists) {
+            lt = goalLatches_.erase(lt);
+            stateChangedOut = true;
+        } else {
+            ++lt;
+        }
+    }
+    return fired;
 }
 
 std::vector<std::string> BalanceSheet::snapshot(double trackedAssetsEur,

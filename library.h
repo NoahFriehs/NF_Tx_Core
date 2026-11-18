@@ -208,6 +208,18 @@ std::vector<std::string> sheetSnapshot();
 //! verbatim. Empty when no live core.
 std::string exportCsv();
 
+//! The core's alert pass (the latched crossing automaton, core-owned;
+//! see BalanceSheet::alertCheck for the state machine): evaluates the
+//! sheet's price alerts against the core's current EUR prices (the
+//! same hierarchy the valuation uses) and the goal-achieved state
+//! against the snapshot's GP condition; returns the FIRED lines
+//! ("FIRED;PRICE;..." / "FIRED;GOAL;...") for the caller to deliver as
+//! notifications. The app renders; the core owns the state, the
+//! thresholds and the math, and persists any latch flip itself - the
+//! fired list is the ONLY thing that crosses the C boundary. Empty
+//! when no live core or nothing fired.
+std::vector<std::string> alertCheck();
+
 }
 
 #endif //NF_TX_CORE_LIBRARY_H

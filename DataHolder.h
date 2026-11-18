@@ -109,6 +109,20 @@ public:
     //! note, never writes a placeholder file).
     std::string exportCsv();
 
+    //! The core's alert pass (the latched crossing automaton,
+    //! core-owned) - see BalanceSheet::alertCheck for the state machine:
+    //! evaluates the sheet's price alerts against the live manager's
+    //! current prices (the same hierarchy the valuation uses; a symbol
+    //! no longer held has no price and is skipped) and the goal-achieved
+    //! state against the snapshot's GP condition (the same tracked
+    //! figure sheetSnapshot injects). Returns the FIRED lines for the
+    //! caller to deliver (the app renders notifications, the core owns
+    //! the state, the thresholds and the math); when ANY latch flipped
+    //! (fire or disarm) the core persists the sheet in its own (atomic)
+    //! save - the worker cadence. EMPTY when no live core or nothing
+    //! fired.
+    std::vector<std::string> alertCheck();
+
     //! The sheet state (read path of the save plumbing + the tests).
     const BalanceSheet &getSheet() {
         std::lock_guard<std::mutex> lock(mutexData);

@@ -1,9 +1,10 @@
 // The user-owned balance-sheet state of the core (ruling: offline
 // functionality lives in the core). The sheet holds the collections the
-// user maintains by hand - liabilities, non-financial assets and goals in
-// this build - plus the core-owned line-serde that is ALSO the v5
-// save-section format: the on-disk section, the C-surface lines and the
-// UI rows are the same text, so the app never re-implements the contract.
+// user maintains by hand - liabilities, non-financial assets, goals and
+// price alerts in this build - the core-owned per-goal alert latch -
+// plus the core-owned line-serde that is ALSO the v5 save-section
+// format: the on-disk section, the C-surface lines and the UI rows are
+// the same text, so the app never re-implements the contract.
 //
 // The sheet is NOT import state: clearAll() (the import-state reset) must
 // never touch it. It is stored alongside the import state in the core's
@@ -14,6 +15,8 @@
 #define NF_TX_CORE_BALANCESHEET_H
 
 #include <ctime>
+#include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -50,6 +53,21 @@ const char *metricToken(GoalMetric m);
 
 //! Parse a serde metric token (case-sensitive). false = unknown token.
 bool metricFromToken(const std::string &token, GoalMetric &out);
+
+//! The crossing direction of a price alert (the core owns the two-token
+//! vocabulary; the serde line carries one of the two case-sensitive
+//! tokens, the parser rejects anything else, and the app picker
+//! hardcodes the same two - one list, no drift channel).
+enum class AlertDirection {
+    Above,  //!< "ABOVE" - the condition is "price strictly above the threshold"
+    Below,  //!< "BELOW" - the condition is "price strictly below the threshold"
+};
+
+//! The serde token of [d] ("ABOVE" / "BELOW").
+const char *directionToken(AlertDirection d);
+
+//! Parse a serde direction token (case-sensitive). false = unknown token.
+bool directionFromToken(const std::string &token, AlertDirection &out);
 
 //! One user-maintained debt line (the liability collection). The current
 //! balance is core-computed (closed-form amortization) and never
@@ -119,6 +137,43 @@ struct Goal {
     GoalMetric metric = GoalMetric::NetWorth;
 };
 
+//! One user-maintained price alert (the alert collection): a threshold
+//! on the current EUR price of one held symbol. The CROSSING IS OWNED BY
+//! THE CORE (see alertCheck): the [fired] latch is armed/disarmed by the
+//! automaton, and the app builds and renders lines only (the UI always
+//! builds the line with fired = false = creation or a deliberate
+//! re-arm by edit).
+struct PriceAlert {
+    //! App-generated id (a UUID), the upsert/delete key. Same rules as
+    //! Liability::id.
+    std::string id;
+    //! A held currency symbol (the core's token, e.g. "BTC"): non-empty,
+    //! ASCII letters/digits, max 16 chars.
+    std::string symbol;
+    //! The crossing direction.
+    AlertDirection direction = AlertDirection::Above;
+    //! The threshold, EUR (>= 0, finite).
+    double thresholdEur = 0.0;
+    //! The latched-crossing state (see alertCheck).
+    bool fired = false;
+    //! The wall-clock "YYYY-MM-DDTHH:MM:SS" of the pass that fired (the
+    //! asOf of that evaluation); empty = never (the line carries "-").
+    std::string firedIso;
+};
+
+//! The core-owned goal-achieved latch (keyed per goal id in the sheet):
+//! it EXISTS only while its goal is latched as reached - the fired
+//! progress is the only non-default state, and it re-arms automatically
+//! when the progress drops below 1 (a goal can swing). Core-managed:
+//! never user-editable (setLine rejects the "GA" kind), persisted in
+//! the save section as the "GA" line while latched.
+struct GoalLatch {
+    bool fired = false;
+    //! The fired stamp ("YYYY-MM-DDTHH:MM:SS" as wall-clock ISO), empty
+    //! when unfired.
+    std::string firedIso;
+};
+
 //! One user-maintained non-financial asset entry (the asset collection).
 //! PURE STATIC value: no schedule math - the user re-declares the value
 //! when it changes and stamps [updated], the "honesty signal" of how
@@ -155,6 +210,17 @@ public:
     const std::vector<Goal> &getGoals() const { return goals_; }
     std::vector<Goal> &mutableGoals() { return goals_; }
 
+    //! The price alert collection (active; input order).
+    const std::vector<PriceAlert> &getPriceAlerts() const { return priceAlerts_; }
+    std::vector<PriceAlert> &mutablePriceAlerts() { return priceAlerts_; }
+
+    //! The core-owned goal-achieved latches (goal id -> latch). A latch
+    //! EXISTS only while its goal is latched as reached (the fired state
+    //! is the only non-default state; it re-arms automatically when the
+    //! progress drops below 1). Core-managed (never user-editable -
+    //! setLine rejects the "GA" kind).
+    const std::map<std::string, GoalLatch> &getGoalLatches() const { return goalLatches_; }
+
     //! The sum of the declared asset values (the non-financial part of
     //! the net-worth snapshot).
     double assetsTotal() const;
@@ -184,6 +250,41 @@ public:
     //! crossing).
     std::vector<std::string> snapshot(double trackedAssetsEur,
                                       const std::tm &asOf) const;
+
+    //! The edge-triggered alert check (the latched crossing automaton,
+    //! core-owned and fixture-pinned). For every price alert with latch
+    //! [fired] and current price [L] (from [currentPrice]; false = the
+    //! core has no current price for the symbol - a symbol no longer
+    //! held - so the alert is SKIPPED ENTIRELY: untouched, never firing
+    //! or disarming, no invented "last price"):
+    //!   ABOVE: cond = L > threshold     BELOW: cond = L < threshold
+    //!   !cond          -> fired = false, fired stamp cleared (disarm)
+    //!   cond && !fired -> fire: fired = true, fired stamp = [asOf],
+    //!                     emit a FIRED line (shape below)
+    //! A condition already TRUE at creation therefore fires EXACTLY ONCE
+    //! on the first pass (latched first-true - the rejected
+    //! crossings-only alternative would never fire it). For every goal,
+    //! the goal-achieved state keyed per goal id: cond = the snapshot's
+    //! GP condition on the goal's metric over the SAME values (NET_WORTH
+    //! reads net = [trackedAssetsEur] + the non-financial sum - the
+    //! liability balances at [asOf], ASSETS reads [trackedAssetsEur] -
+    //! never a recomputation); the latch re-arms automatically when the
+    //! progress drops below 1 (a goal can swing - no user edit needed),
+    //! a degenerate target (<= 0) has no crossing and no latch.
+    //! The FIRED lines are the ONLY part of this check that crosses the
+    //! C boundary - the state, the prices and the math never do:
+    //!   FIRED;PRICE;<id>;<symbol>;<ABOVE|BELOW>;<threshold>;<price>
+    //!   FIRED;GOAL;<id>;<label>;<metric>;<current>;<target>
+    //! ([label] is ';;'-escaped like every sheet text field; [current]
+    //! is SIGNED, formatted like the snapshot's values.)
+    //! [stateChangedOut] = true when ANY latch changed (a fire OR a
+    //! disarm - both are persistable sheet state). Latches of goals that
+    //! no longer exist are pruned (defensive: a hand-edited store) and
+    //! count as a change.
+    std::vector<std::string> alertCheck(
+            double trackedAssetsEur,
+            const std::function<bool(const std::string &, double &)> &currentPrice,
+            const std::tm &asOf, bool &stateChangedOut);
 
     //!
     //! The line-serde (the house string-line contract, core-owned):
@@ -273,10 +374,26 @@ private:
                               Goal &out);
     //! The current goal as a line (the single-entry form).
     static std::string goalLine(const Goal &g);
+    //! The current alert as a line (the single-entry form).
+    static std::string alertLine(const PriceAlert &a);
+    //! Parse + validate one alert (the single source of truth; shared by
+    //! setLine and parse). false on a bad line.
+    static bool parseAlertLine(const std::string &line, std::string &outId,
+                               PriceAlert &out);
+    //! The goal latch as a line (emitted ONLY while latched):
+    //! "GA;<goalId>;1;<firedISO>".
+    static std::string goalLatchLine(const std::string &goalId,
+                                     const std::string &firedIso);
+    //! Parse + validate one goal latch line (core-owned state; see
+    //! goalLatchLine for the shape). false on a bad line.
+    static bool parseGoalLatchLine(const std::string &line, std::string &outGoalId,
+                                   std::string &outFiredIso);
 
     std::vector<Liability> liabilities_;
     std::vector<Asset> assets_;
     std::vector<Goal> goals_;
+    std::vector<PriceAlert> priceAlerts_;
+    std::map<std::string, GoalLatch> goalLatches_;
 };
 
 // The line-format text helpers (the single escape rule, both directions).

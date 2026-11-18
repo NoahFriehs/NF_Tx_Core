@@ -138,6 +138,22 @@ public:
     //! Set the prices, must be in the same order as getCurrencies().
     void setPrices(const std::vector<double> &prices);
 
+    //! The current EUR price of [symbol] through the SAME hierarchy the
+    //! valuation uses (fresh -> stale of any age -> static baseline; a
+    //! known held symbol always resolves, an unknown table symbol to 0.0).
+    //! Returns false when [symbol] is not one of the held currencies -
+    //! the consumer (the alert check) must never price a symbol the core
+    //! no longer holds (no invented "last price" state).
+    bool currentPrice(const std::string &symbol, double &outPrice) const {
+        for (const auto &c: currencies) {
+            if (c == symbol) {
+                outPrice = assetValue.getPrice(symbol);
+                return true;
+            }
+        }
+        return false;
+    }
+
     //! Return the total money spent
     double getTotalMoneySpent() const;
 
