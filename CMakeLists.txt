@@ -9,6 +9,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(NF_TX_CORE_SOURCES
         BalanceSheet.cpp
         DataHolder.cpp
+        ExportCsv.cpp
         FileLog.cpp
         Price/AssetValue.cpp
         Price/Cache.cpp

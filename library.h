@@ -197,6 +197,17 @@ std::vector<std::string> sheetList(const std::string &kind);
 //! shows the lines only. Empty when no live core.
 std::vector<std::string> sheetSnapshot();
 
+//! \brief The full CSV export of the core state as ONE file string (see
+//! ExportCsv.h for the byte contract): the exact 9-column header, one
+//! row per transaction of every wallet (crypto inner, outside and card
+//! maps - sorted by wallet name, then date), the balance-sheet section
+//! (the sheet's own line serde, the L lines with the core-computed
+//! balance trailer at the export time) and the trailing export stamp.
+//! The sheet's state owner builds the dump from its own state, so the
+//! vocabulary is faithful by construction; the caller writes the bytes
+//! verbatim. Empty when no live core.
+std::string exportCsv();
+
 }
 
 #endif //NF_TX_CORE_LIBRARY_H

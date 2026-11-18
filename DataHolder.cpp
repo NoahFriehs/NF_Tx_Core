@@ -2,6 +2,7 @@
 
 #include <string>
 
+#include "ExportCsv.h"
 #include "FileLog.h"
 
 // The save/load funnels carry the sheet section with the store: the sheet
@@ -90,4 +91,14 @@ std::vector<std::string> DataHolder::sheetSnapshot() {
     return sheet_.snapshot(
             transactionManager->getTotalValueOfAssetsIncludingBuffer(),
             SheetSerde::todayWallClock());
+}
+
+std::string DataHolder::exportCsv() {
+    std::lock_guard<std::mutex> lock(mutexData); // Thread-safe access
+    if (!transactionManager) return {};
+    // One instant for the whole file: the liability balances and the
+    // trailing stamp share the same wall clock, so the archive is
+    // self-consistent.
+    return CsvExport::buildCsvFile(*transactionManager, sheet_,
+                                   SheetSerde::todayWallClock());
 }

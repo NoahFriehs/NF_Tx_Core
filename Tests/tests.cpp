@@ -35,6 +35,7 @@
 #include "../Util/CharUtil.h"
 #include "../Util/Util.h"
 #include "../DataHolder.h"
+#include "../ExportCsv.h"
 #include "../Wallet/Wallet.h"
 
 // ---------------------------------------------------------------- harness --
@@ -3634,6 +3635,154 @@ static void testMultiFileAppend() {
 
 // ------------------------------------------------------------------ main ---
 
+static void testCsvExport() {
+    SECTION("csv export: the byte-frozen contract (header, rows, sheet, stamp)");
+    {
+        // The full fixture state: rows in ALL THREE wallet maps (the
+        // withdrawal lands in the inner AND the outside wallet, a
+        // same-name/timestamp tie), an escaped ';' in both free-text
+        // columns, a midnight timestamp, an empty description, and one
+        // sheet entry per collection.
+        auto tm = std::make_unique<TransactionManager>();
+        std::vector<std::string> cryptoLines{
+                CDC_HEADER,
+                cdcLine("2026-03-01 00:00:00", "BTC", "-0.5", "-500", "crypto_withdrawal",
+                        "Exchange out"),
+                cdcLine("2026-03-02 09:00:00", "BTC", "0.5", "500", "crypto_purchase",
+                        "Coinbase; buy"),
+                cdcLine("2026-03-05 08:00:00", "ETH", "1", "3000",
+                        "crypto_earn_interest_paid", ""),
+                // crypto_purchase on the internal EUR buffer: the row joins
+                // the wallet (a supercharger_deposit would not - the export
+                // is the per-wallet state, exactly what the core shows).
+                cdcLine("2026-03-03 14:15:00", "EUR", "500", "500", "crypto_purchase",
+                        "Salary in"),
+        };
+        TransactionParser cryptoParser(cryptoLines);
+        cryptoParser.parseFromCsv(Mode::CDC);
+        tm->setTransactions(cryptoParser.getTransactions(), Mode::CDC);
+
+        // Card: no header (the parser skips it only when it matches).
+        TransactionParser cardParser({
+                "2026-03-04 16:20:00,Grocery Store Pay; loyalty,VISA,10.50,,,,-10.50,0,",
+                "2026-03-01 11:11:11,EUR -> EUR,EUR,25,,,,25,0,",
+        });
+        cardParser.parseFromCsv(Mode::Card);
+        tm->setTransactions(cardParser.getTransactions(), Mode::Card);
+        tm->processTransactions();
+
+        BalanceSheet sheet;
+        CHECK(sheet.setLine("L;fx-1;Mortgage;100000;4.8;2025-01-01;-;800"));
+        CHECK(sheet.setLine("A;fx-2;House;REAL_ESTATE;350000;2025-06-15T14:05:09;-"));
+        CHECK(sheet.setLine("G;fx-3;Target;1000;-;NET_WORTH"));
+
+        // The Pinned instant: the liability trailer and the export stamp
+        // share it, so the WHOLE file is byte-deterministic (the hand
+        // value: n=15 months, i=0.004, P=100000, M=800 ->
+        // 100000*1.004^15 - 800*(1.004^15-1)/0.004 = 93829.052746... ->
+        // 93829.05275 at 10 significant digits).
+        std::tm now{};
+        now.tm_year = 2026 - 1900;
+        now.tm_mon = 3;
+        now.tm_mday = 1;
+        now.tm_hour = 12;
+        now.tm_min = 0;
+        now.tm_sec = 0;
+
+        CHECK(std::string(CsvExport::kHeaderLine) ==
+              "date;time;wallet;wallet_kind;tx_kind;amount;currency;symbol;description");
+
+        const std::string file = CsvExport::buildCsvFile(*tm, sheet, now);
+
+        // The WHOLE file, byte-exact. Row order = (wallet name, date,
+        // time); the inner/outside tie of the withdrawal keeps the
+        // collection order (crypto inner before outside); a midnight
+        // timestamp renders an empty time; the sheet section rides the
+        // line serde (L with the core-computed trailer); the stamp is
+        // the pinned instant.
+        const std::string expected =
+              "date;time;wallet;wallet_kind;tx_kind;amount;currency;symbol;description\n"
+              "2026-03-01;;BTC;crypto;crypto_withdrawal;-0.5;BTC;BTC;Exchange out\n"
+              "2026-03-01;;BTC;outside;crypto_withdrawal;-0.5;BTC;BTC;Exchange out\n"
+              "2026-03-02;09:00;BTC;crypto;crypto_purchase;0.5;BTC;BTC;Coinbase;; buy\n"
+              "2026-03-05;08:00;ETH;crypto;crypto_earn_interest_paid;1;ETH;ETH;\n"
+              "2026-03-03;14:15;EUR;crypto;crypto_purchase;500;EUR;;Salary in\n"
+              "2026-03-01;11:11;EUR -> EUR;card;EUR -> EUR;25;EUR;;EUR -> EUR\n"
+              // The card wallet name is the payment text itself (the wallet
+              // map key), so it - and the tx_kind - carry the escaped ';';
+              // the card's "currency" column holds the CARD name (VISA),
+              // which is not fiat, so the symbol column repeats it.
+              "2026-03-04;16:20;Grocery Store Pay;; loyalty;card;Grocery Store Pay;; loyalty;10.5;VISA;VISA;Grocery Store Pay;; loyalty\n"
+              "# balance sheet\n"
+              "L;fx-1;Mortgage;100000;4.8;2025-01-01;-;800;bal;93829.05275\n"
+              "A;fx-2;House;REAL_ESTATE;350000;2025-06-15T14:05:09;-\n"
+              "G;fx-3;Target;1000;-;NET_WORTH\n"
+              "# exported 2026-04-01T12:00:00 by cdcsvparser\n";
+        CHECK(file == expected);
+    }
+
+    SECTION("csv export: empty state is header + marker + stamp only");
+    {
+        TransactionManager tm;
+        BalanceSheet sheet;
+        std::tm now{};
+        now.tm_year = 2027 - 1900;
+        now.tm_mon = 11;
+        now.tm_mday = 31;
+        now.tm_hour = 23;
+        now.tm_min = 59;
+        now.tm_sec = 59;
+        CHECK(CsvExport::buildCsvFile(tm, sheet, now) ==
+              "date;time;wallet;wallet_kind;tx_kind;amount;currency;symbol;description\n"
+              "# balance sheet\n"
+              "# exported 2027-12-31T23:59:59 by cdcsvparser\n");
+    }
+
+    SECTION("csv export: the C surface rides the live holder state");
+    {
+        auto &dh = DataHolder::GetInstance();
+        // Sanitize the holder's sheet (the earlier tests leave it in
+        // their own states): every entry of every active kind goes.
+        for (const std::string &kind: {"L", "A", "G"}) {
+            for (const auto &line: dh.sheetList(kind)) {
+                const size_t semi = line.find(';');
+                CHECK(semi != std::string::npos);
+                if (semi == std::string::npos) continue;
+                CHECK(dh.sheetDelete(kind + line.substr(1, semi - 1)));
+            }
+            CHECK(dh.sheetList(kind).empty());
+        }
+
+        // A live but never-processed manager: no rows, an empty sheet ->
+        // exactly the three skeleton lines (the stamp value is the wall
+        // clock, so the structure - not the value - is pinned here).
+        dh.SetTransactionManager(std::make_unique<TransactionManager>());
+        const std::string file = exportCsv();   // the plain C surface
+        std::vector<std::string> lines;
+        {
+            size_t start = 0;
+            while (true) {
+                const size_t end = file.find('\n', start);
+                if (end == std::string::npos) break;
+                lines.push_back(file.substr(start, end - start));
+                start = end + 1;
+            }
+            CHECK(file.substr(file.size() - 1) == "\n");   // trailing newline
+        }
+        CHECK(lines.size() == 3);
+        CHECK(lines[0] ==
+              "date;time;wallet;wallet_kind;tx_kind;amount;currency;symbol;description");
+        CHECK(lines[1] == "# balance sheet");
+        CHECK(lines[2].size() == 45);   // "# exported " + ISO-8601 (19) + " by cdcsvparser"
+        CHECK(lines[2].rfind("# exported ", 0) == 0);
+        CHECK(lines[2].ends_with(" by cdcsvparser"));
+
+        // Leave the C surface on a never-ready manager again.
+        dh.SetTransactionManager(std::make_unique<TransactionManager>());
+    }
+}
+
+
 int main() {
     FileLog::init("tests.log", true, FileLog::LOG_ERROR);   // quiet: only errors go to file
 
@@ -3683,6 +3832,7 @@ int main() {
     testBlockPitFixture();
     testImportStateSemantics();
     testMultiFileAppend();
+    testCsvExport();
     testDlsymSurfaceLinkage();
 
     std::printf("\n%d checks, %d failure%s\n", g_checks, g_failures,

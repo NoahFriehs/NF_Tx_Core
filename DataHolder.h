@@ -102,6 +102,13 @@ public:
     //! values of its own).
     std::vector<std::string> sheetSnapshot();
 
+    //! The full CSV export file of the core state as ONE string (see
+    //! ExportCsv.h for the byte contract): the transaction table of
+    //! every wallet + the balance-sheet section at one instant. EMPTY
+    //! when no live core (the not-ready window: the caller reports the
+    //! note, never writes a placeholder file).
+    std::string exportCsv();
+
     //! The sheet state (read path of the save plumbing + the tests).
     const BalanceSheet &getSheet() {
         std::lock_guard<std::mutex> lock(mutexData);
